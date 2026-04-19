@@ -152,8 +152,14 @@ impl ShieldEngine {
     }
 
     pub fn run(&self, rx: mpsc::Receiver<SensorEvent>) {
+        let mut count = 0u64;
         for event in rx {
             self.handle(event);
+            count += 1;
+            if count % 50 == 0 {
+                // TEMPORARY: runtime graph verification
+                println!("[LIBERTY SHIELD] {}", self.graph.lock().unwrap().summarize_recent_activity());
+            }
         }
     }
 }
