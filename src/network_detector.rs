@@ -50,6 +50,7 @@ impl Detector for NetworkThreatDetector {
                 severity: Severity::Critical,
                 source: "NetworkThreatDetector".to_string(),
                 message: format!("[ALERT] connection to suspicious port {} ({})", remote_port, remote_ip),
+                score: 40,
             });
         }
 
@@ -58,6 +59,7 @@ impl Detector for NetworkThreatDetector {
                 severity: Severity::Warning,
                 source: "NetworkThreatDetector".to_string(),
                 message: format!("[ALERT] repeated connections from {} ({} in 60s)", remote_ip, ip_count),
+                score: 20,
             });
         }
 
@@ -66,6 +68,7 @@ impl Detector for NetworkThreatDetector {
                 severity: Severity::Info,
                 source: "NetworkThreatDetector".to_string(),
                 message: format!("[ALERT] high connection volume: {} connections in 60s", total),
+                score: 0,
             });
         }
 

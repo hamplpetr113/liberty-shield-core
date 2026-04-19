@@ -28,9 +28,12 @@ pub fn list_processes(tx: mpsc::Sender<SensorEvent>) {
                     process_name
                 ));
 
+                let parent_pid = process.parent().map(|p| p.as_u32()).unwrap_or(0);
+
                 let _ = tx.send(SensorEvent::ProcessStarted {
                     name: process_name.clone(),
                     pid: pid.as_u32(),
+                    parent_pid,
                 });
 
                 known_processes.insert(process_name.clone());
