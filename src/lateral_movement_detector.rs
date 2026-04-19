@@ -7,6 +7,7 @@ use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
 
 const SHELL_PROCESSES: [&str; 4] = ["cmd.exe", "powershell.exe", "wscript.exe", "mshta.exe"];
 const COOLDOWN: Duration = Duration::from_secs(60);
+const PID_TTL: Duration  = Duration::from_secs(300);
 
 fn is_shell_like(name: &str) -> bool {
     SHELL_PROCESSES.iter().any(|s| name.eq_ignore_ascii_case(s))
@@ -14,7 +15,7 @@ fn is_shell_like(name: &str) -> bool {
 
 pub struct LateralMovementDetector {
     graph: Arc<Mutex<BehaviorGraph>>,
-    pid_names: Mutex<HashMap<u32, String>>,
+    pid_names: Mutex<HashMap<u32, (String, Instant)>>,
     alerted: Mutex<HashMap<u32, Instant>>,
 }
 
@@ -34,14 +35,20 @@ impl Detector for LateralMovementDetector {
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
         match event {
             SensorEvent::ProcessStarted { name, pid, .. } => {
-                self.pid_names.lock().unwrap().insert(*pid, name.clone());
+                let now = Instant::now();
+                {
+                    let mut names = self.pid_names.lock().unwrap();
+                    names.retain(|_, (_, t)| now.saturating_duration_since(*t) < PID_TTL);
+                    names.insert(*pid, (name.clone(), now));
+                }
+                self.alerted.lock().unwrap().retain(|_, t| now.saturating_duration_since(*t) < COOLDOWN);
                 None
             }
             SensorEvent::NetworkConnection { pid, .. } => {
                 let p = (*pid)?;
                 let name = {
                     let names = self.pid_names.lock().unwrap();
-                    names.get(&p).cloned()?
+                    names.get(&p).map(|(n, _)| n.clone())?
                 };
                 if !is_shell_like(&name) {
                     return None;
