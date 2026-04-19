@@ -132,6 +132,32 @@ impl BehaviorGraph {
             process_count, network_count, self.edges.len(), spawned, connected_to
         )
     }
+
+    pub fn process_node(&self, pid: u32) -> Option<usize> {
+        self.pid_index.get(&pid).copied()
+    }
+
+    pub fn connections_of(&self, pid: u32) -> Vec<(String, u16)> {
+        let Some(&proc_idx) = self.pid_index.get(&pid) else { return Vec::new(); };
+        self.edges.iter()
+            .filter(|(from, _, edge)| *from == proc_idx && matches!(edge, GraphEdge::ConnectedTo))
+            .filter_map(|(_, to, _)| match &self.nodes[*to] {
+                GraphNode::Network { remote_ip, remote_port } => Some((remote_ip.clone(), *remote_port)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn children_of(&self, pid: u32) -> Vec<u32> {
+        let Some(&proc_idx) = self.pid_index.get(&pid) else { return Vec::new(); };
+        self.edges.iter()
+            .filter(|(from, _, edge)| *from == proc_idx && matches!(edge, GraphEdge::Spawned))
+            .filter_map(|(_, to, _)| match &self.nodes[*to] {
+                GraphNode::Process { pid, .. } => Some(*pid),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
