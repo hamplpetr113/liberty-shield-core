@@ -1,3 +1,4 @@
+use crate::behavior_graph::BehaviorGraph;
 use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -56,6 +57,7 @@ pub struct ShieldEngine {
     sinks: Vec<Box<dyn Sink>>,
     score: Mutex<ThreatScore>,
     patterns: Vec<Box<dyn AttackPattern>>,
+    graph: Mutex<BehaviorGraph>,
 }
 
 impl ShieldEngine {
@@ -65,6 +67,7 @@ impl ShieldEngine {
             sinks: Vec::new(),
             score: Mutex::new(ThreatScore { score: 0, last_event: None }),
             patterns: Vec::new(),
+            graph: Mutex::new(BehaviorGraph::new()),
         }
     }
 
@@ -81,6 +84,14 @@ impl ShieldEngine {
     }
 
     pub fn handle(&self, event: SensorEvent) {
+        match &event {
+            SensorEvent::ProcessStarted { name, pid, parent_pid } => {
+                self.graph.lock().unwrap().add_process(*parent_pid, *pid, name.clone());
+            }
+            SensorEvent::NetworkConnection { remote_ip, remote_port } => {
+                self.graph.lock().unwrap().add_network_connection(remote_ip.clone(), *remote_port);
+            }
+        }
         for detector in &self.detectors {
             if let Some(alert) = detector.evaluate(&event) {
                 let crossed = {

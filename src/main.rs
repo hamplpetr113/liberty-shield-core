@@ -2,6 +2,7 @@ mod pattern_matcher;
 mod attack_simulator;
 mod alert_sink;
 mod engine;
+mod behavior_graph;
 mod response_engine;
 mod network_detector;
 mod network_sensor;
