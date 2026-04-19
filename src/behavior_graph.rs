@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+const PENDING_TTL: Duration = Duration::from_secs(30);
 
 
 
@@ -30,7 +33,9 @@ pub struct BehaviorGraph {
 
     pid_index: HashMap<u32, usize>,
 
-    pending: HashMap<u32, Vec<usize>>,
+    pending: HashMap<u32, Vec<(usize, Instant)>>,
+
+    ttl: Duration,
 
 }
 
@@ -39,19 +44,17 @@ pub struct BehaviorGraph {
 impl BehaviorGraph {
 
     pub fn new() -> Self {
+        Self::with_ttl(PENDING_TTL)
+    }
 
+    pub fn with_ttl(ttl: Duration) -> Self {
         BehaviorGraph {
-
             nodes: Vec::new(),
-
             edges: Vec::new(),
-
             pid_index: HashMap::new(),
-
             pending: HashMap::new(),
-
+            ttl,
         }
-
     }
 
 
@@ -70,9 +73,12 @@ impl BehaviorGraph {
 
         }
 
-        if let Some(net_indices) = self.pending.remove(&pid) {
-            for net_idx in net_indices {
-                self.edges.push((child_idx, net_idx, GraphEdge::ConnectedTo));
+        if let Some(entries) = self.pending.remove(&pid) {
+            let now = Instant::now();
+            for (net_idx, inserted_at) in entries {
+                if now.saturating_duration_since(inserted_at) < self.ttl {
+                    self.edges.push((child_idx, net_idx, GraphEdge::ConnectedTo));
+                }
             }
         }
 
@@ -87,7 +93,12 @@ impl BehaviorGraph {
             if let Some(&proc_idx) = self.pid_index.get(&p) {
                 self.edges.push((proc_idx, net_idx, GraphEdge::ConnectedTo));
             } else {
-                self.pending.entry(p).or_default().push(net_idx);
+                let now = Instant::now();
+                self.pending.retain(|_, entries| {
+                    entries.retain(|(_, t)| now.saturating_duration_since(*t) < self.ttl);
+                    !entries.is_empty()
+                });
+                self.pending.entry(p).or_default().push((net_idx, now));
             }
         }
     }
@@ -155,6 +166,23 @@ mod tests {
         g.add_process(0, 1, "chrome.exe".to_string());
         assert_eq!(g.edges.len(), 1);
         assert!(matches!(g.edges[0].2, GraphEdge::ConnectedTo));
+    }
+
+    #[test]
+    fn test_pending_fresh_link_connects() {
+        let mut g = BehaviorGraph::new();
+        g.add_network_connection("5.6.7.8".to_string(), 80, Some(2));
+        g.add_process(0, 2, "curl.exe".to_string());
+        assert_eq!(g.edges.len(), 1);
+        assert!(matches!(g.edges[0].2, GraphEdge::ConnectedTo));
+    }
+
+    #[test]
+    fn test_pending_expired_link_does_not_connect() {
+        let mut g = BehaviorGraph::with_ttl(Duration::ZERO);
+        g.add_network_connection("5.6.7.8".to_string(), 80, Some(2));
+        g.add_process(0, 2, "curl.exe".to_string());
+        assert_eq!(g.edges.len(), 0);
     }
 
     #[test]
