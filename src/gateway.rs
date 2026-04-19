@@ -38,6 +38,7 @@ pub enum SensorEventDTO {
         pid: u32,
         app_name: String,
     },
+    Ipv6Connection,
 }
 
 impl From<SensorEventDTO> for SensorEvent {
@@ -57,6 +58,12 @@ impl From<SensorEventDTO> for SensorEvent {
                 SensorEvent::ProcessStarted {
                     name: format!("permission:{}", permission),
                     pid,
+                    parent_pid: 0,
+                },
+            SensorEventDTO::Ipv6Connection =>
+                SensorEvent::ProcessStarted {
+                    name: "ipv6_connection".to_string(),
+                    pid: 0,
                     parent_pid: 0,
                 },
         }

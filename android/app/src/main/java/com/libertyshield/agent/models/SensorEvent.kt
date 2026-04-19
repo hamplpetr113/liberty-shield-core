@@ -64,4 +64,11 @@ sealed class SensorEvent {
                 .put("app_name", appName))
             .toString()
     }
+
+    object Ipv6Connection : SensorEvent() {
+        override fun toJson(deviceId: String) = JSONObject()
+            .put("device_id", deviceId)
+            .put("event", JSONObject().put("type", "ipv6_connection"))
+            .toString()
+    }
 }

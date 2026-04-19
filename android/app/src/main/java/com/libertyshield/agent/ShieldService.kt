@@ -6,15 +6,15 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import android.net.VpnService
 import com.libertyshield.agent.monitors.AppMonitor
-import com.libertyshield.agent.monitors.NetworkMonitor
 import com.libertyshield.agent.monitors.SensorMonitor
+import com.libertyshield.agent.vpn.ShieldVpnService
 
 class ShieldService : Service() {
 
     private lateinit var client: GatewayClient
     private lateinit var appMonitor: AppMonitor
-    private lateinit var networkMonitor: NetworkMonitor
     private lateinit var sensorMonitor: SensorMonitor
 
     override fun onCreate() {
@@ -29,24 +29,36 @@ class ShieldService : Service() {
             deviceId   = deviceId,
         )
 
-        appMonitor     = AppMonitor(this, client)
-        networkMonitor = NetworkMonitor(this, client)
-        sensorMonitor  = SensorMonitor(this, client)
+        appMonitor    = AppMonitor(this, client)
+        sensorMonitor = SensorMonitor(this, client)
 
         appMonitor.start()
-        networkMonitor.start()
         sensorMonitor.start()
+        startVpnTelemetry()
     }
 
     override fun onDestroy() {
         sensorMonitor.stop()
-        networkMonitor.stop()
         appMonitor.stop()
+        stopService(Intent(this, ShieldVpnService::class.java))
         client.shutdown()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startVpnTelemetry() {
+        if (VpnService.prepare(this) != null) {
+            // Permission not yet granted — start VpnPermissionActivity to show the system dialog.
+            val i = Intent(this, VpnPermissionActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } else {
+            val i = Intent(this, ShieldVpnService::class.java)
+                .setAction(ShieldVpnService.ACTION_START)
+            startService(i)
+        }
+    }
 
     private fun startAsForeground() {
         val channelId = "liberty_shield_channel"
