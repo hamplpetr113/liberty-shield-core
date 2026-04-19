@@ -70,10 +70,14 @@ impl BehaviorGraph {
 
 
 
-    pub fn add_network_connection(&mut self, remote_ip: String, remote_port: u16) {
-
+    pub fn add_network_connection(&mut self, remote_ip: String, remote_port: u16, pid: Option<u32>) {
+        let net_idx = self.nodes.len();
         self.nodes.push(GraphNode::Network { remote_ip, remote_port });
-
+        if let Some(p) = pid {
+            if let Some(&proc_idx) = self.pid_index.get(&p) {
+                self.edges.push((proc_idx, net_idx, GraphEdge::ConnectedTo));
+            }
+        }
     }
 
 
@@ -116,8 +120,27 @@ mod tests {
     #[test]
     fn test_network_insertion() {
         let mut g = BehaviorGraph::new();
-        g.add_network_connection("192.168.1.1".to_string(), 4444);
+        g.add_network_connection("192.168.1.1".to_string(), 4444, None);
         assert_eq!(g.nodes.len(), 1);
+        assert_eq!(g.edges.len(), 0);
+    }
+
+    #[test]
+    fn test_process_to_network_link() {
+        let mut g = BehaviorGraph::new();
+        g.add_process(0, 1, "chrome.exe".to_string());
+        g.add_network_connection("1.2.3.4".to_string(), 443, Some(1));
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1);
+        assert!(matches!(g.edges[0].2, GraphEdge::ConnectedTo));
+    }
+
+    #[test]
+    fn test_network_without_pid_is_unlinked() {
+        let mut g = BehaviorGraph::new();
+        g.add_process(0, 1, "chrome.exe".to_string());
+        g.add_network_connection("1.2.3.4".to_string(), 443, None);
+        assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 0);
     }
 }

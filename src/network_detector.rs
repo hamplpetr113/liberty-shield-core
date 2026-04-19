@@ -30,7 +30,7 @@ impl Detector for NetworkThreatDetector {
 
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
         let (remote_ip, remote_port) = match event {
-            SensorEvent::NetworkConnection { remote_ip, remote_port } => (remote_ip, remote_port),
+            SensorEvent::NetworkConnection { remote_ip, remote_port, .. } => (remote_ip, remote_port),
             SensorEvent::ProcessStarted { .. } => return None,
         };
 

@@ -12,19 +12,20 @@ pub fn monitor_connections(tx: mpsc::Sender<SensorEvent>) {
     let mut known: HashSet<String> = HashSet::new();
 
     loop {
-        if let Ok(output) = Command::new("netstat").arg("-n").output() {
+        if let Ok(output) = Command::new("netstat").args(["-n", "-o"]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
 
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
 
-                // TCP line: TCP  local_addr  remote_addr  STATE
-                if parts.len() < 4 || parts[0] != "TCP" {
+                // TCP line: TCP  local_addr  remote_addr  STATE  PID
+                if parts.len() < 5 || parts[0] != "TCP" {
                     continue;
                 }
 
                 let remote = parts[2];
                 let state  = parts[3];
+                let pid    = parts[4].parse::<u32>().ok();
 
                 if state == "LISTENING" {
                     continue;
@@ -43,6 +44,7 @@ pub fn monitor_connections(tx: mpsc::Sender<SensorEvent>) {
                             let _ = tx.send(SensorEvent::NetworkConnection {
                                 remote_ip: ip_str.to_string(),
                                 remote_port: port,
+                                pid,
                             });
                         }
                     }

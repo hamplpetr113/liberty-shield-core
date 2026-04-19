@@ -125,7 +125,7 @@ impl AttackPattern for BotnetPattern {
 
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let (remote_ip, remote_port) = match event {
-            SensorEvent::NetworkConnection { remote_ip, remote_port } => (remote_ip, remote_port),
+            SensorEvent::NetworkConnection { remote_ip, remote_port, .. } => (remote_ip, remote_port),
             SensorEvent::ProcessStarted { .. } => return None,
         };
 

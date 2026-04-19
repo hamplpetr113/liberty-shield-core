@@ -7,7 +7,7 @@ const ATTACK_WINDOW: Duration = Duration::from_secs(30);
 
 pub enum SensorEvent {
     ProcessStarted { name: String, pid: u32, parent_pid: u32 },
-    NetworkConnection { remote_ip: String, remote_port: u16 },
+    NetworkConnection { remote_ip: String, remote_port: u16, pid: Option<u32> },
 }
 
 pub enum Severity {
@@ -88,8 +88,8 @@ impl ShieldEngine {
             SensorEvent::ProcessStarted { name, pid, parent_pid } => {
                 self.graph.lock().unwrap().add_process(*parent_pid, *pid, name.clone());
             }
-            SensorEvent::NetworkConnection { remote_ip, remote_port } => {
-                self.graph.lock().unwrap().add_network_connection(remote_ip.clone(), *remote_port);
+            SensorEvent::NetworkConnection { remote_ip, remote_port, pid } => {
+                self.graph.lock().unwrap().add_network_connection(remote_ip.clone(), *remote_port, *pid);
             }
         }
         for detector in &self.detectors {
