@@ -58,16 +58,18 @@ pub struct ShieldEngine {
     score: Mutex<ThreatScore>,
     patterns: Vec<Box<dyn AttackPattern>>,
     graph: Arc<Mutex<BehaviorGraph>>,
+    threshold: u32,
 }
 
 impl ShieldEngine {
-    pub fn new() -> Self {
+    pub fn new(threshold: u32) -> Self {
         ShieldEngine {
             detectors: Vec::new(),
             sinks: Vec::new(),
             score: Mutex::new(ThreatScore { score: 0, last_event: None }),
             patterns: Vec::new(),
             graph: Arc::new(Mutex::new(BehaviorGraph::new())),
+            threshold,
         }
     }
 
@@ -108,7 +110,7 @@ impl ShieldEngine {
                     }
                     ts.score += alert.score;
                     ts.last_event = Some(now);
-                    if ts.score >= 60 {
+                    if ts.score >= self.threshold {
                         let total = ts.score;
                         ts.score = 0;
                         ts.last_event = None;
@@ -124,7 +126,7 @@ impl ShieldEngine {
                     let composite = ThreatAlert {
                         severity: Severity::Critical,
                         source: "ThreatScore".to_string(),
-                        message: format!("[ALERT] threat score {} exceeded threshold (60)", total),
+                        message: format!("[ALERT] threat score {} exceeded threshold ({})", total, self.threshold),
                         score: 0,
                     };
                     for sink in &self.sinks {

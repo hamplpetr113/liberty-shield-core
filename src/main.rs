@@ -57,9 +57,9 @@ fn main() {
         attack_simulator::simulate_botnet(&tx);
     }
 
-    let mut engine = ShieldEngine::new();
+    let mut engine = ShieldEngine::new(cfg.threat_score_threshold);
     engine.add_detector(Box::new(ProcessThreatDetector::new()));
-    engine.add_detector(Box::new(NetworkThreatDetector::new()));
+    engine.add_detector(Box::new(NetworkThreatDetector::new(&cfg)));
     let graph = engine.graph_handle();
     engine.add_detector(Box::new(LateralMovementDetector::new(graph, &cfg)));
     engine.add_pattern(Box::new(MinerPattern::new()));

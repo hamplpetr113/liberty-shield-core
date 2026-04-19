@@ -8,6 +8,8 @@ pub struct ShieldConfig {
     pub safe_ports: Vec<u16>,
     pub safe_ip_prefixes: Vec<String>,
     pub safe_172_range: (u8, u8),
+    pub suspicious_ports: Vec<u16>,
+    pub threat_score_threshold: u32,
 }
 
 impl Default for ShieldConfig {
@@ -28,6 +30,8 @@ impl Default for ShieldConfig {
                 "::1".to_string(),
             ],
             safe_172_range: (16, 31),
+            suspicious_ports: vec![22, 23, 3389, 4444, 5555],
+            threat_score_threshold: 60,
         }
     }
 }
@@ -63,6 +67,15 @@ impl ShieldConfig {
                 if let (Ok(lo), Ok(hi)) = (parts[0].trim().parse::<u8>(), parts[1].trim().parse::<u8>()) {
                     cfg.safe_172_range = (lo, hi);
                 }
+            }
+        }
+        if let Some(v) = pairs.get("network.suspicious_ports") {
+            let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if !ports.is_empty() { cfg.suspicious_ports = ports; }
+        }
+        if let Some(v) = pairs.get("engine.threat_score_threshold") {
+            if let Ok(n) = v.trim().parse::<u32>() {
+                if n > 0 { cfg.threat_score_threshold = n; }
             }
         }
         cfg

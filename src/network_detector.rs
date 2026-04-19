@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::config::ShieldConfig;
 use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
 
-const SUSPICIOUS_PORTS: [u16; 4] = [4444, 1337, 5555, 6666];
 const REPEAT_THRESHOLD: u32 = 3;
 const SCAN_THRESHOLD: u32 = 20;
 
@@ -13,12 +13,14 @@ struct State {
 
 pub struct NetworkThreatDetector {
     state: Mutex<State>,
+    suspicious_ports: Vec<u16>,
 }
 
 impl NetworkThreatDetector {
-    pub fn new() -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         NetworkThreatDetector {
             state: Mutex::new(State { recent: Vec::new() }),
+            suspicious_ports: cfg.suspicious_ports.clone(),
         }
     }
 }
@@ -45,7 +47,7 @@ impl Detector for NetworkThreatDetector {
         let ip_count = s.recent.iter().filter(|(_, ip)| ip == remote_ip).count() as u32;
         let total = s.recent.len() as u32;
 
-        if SUSPICIOUS_PORTS.contains(remote_port) {
+        if self.suspicious_ports.contains(remote_port) {
             return Some(ThreatAlert {
                 severity: Severity::Critical,
                 source: "NetworkThreatDetector".to_string(),
