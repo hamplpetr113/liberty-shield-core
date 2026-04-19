@@ -1,0 +1,63 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use crate::behavior_graph::BehaviorGraph;
+use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
+
+const SHELL_PROCESSES: [&str; 4] = ["cmd.exe", "powershell.exe", "wscript.exe", "mshta.exe"];
+
+fn is_shell_like(name: &str) -> bool {
+    SHELL_PROCESSES.iter().any(|s| name.eq_ignore_ascii_case(s))
+}
+
+pub struct LateralMovementDetector {
+    graph: Arc<Mutex<BehaviorGraph>>,
+    pid_names: Mutex<HashMap<u32, String>>,
+}
+
+impl LateralMovementDetector {
+    pub fn new(graph: Arc<Mutex<BehaviorGraph>>) -> Self {
+        LateralMovementDetector {
+            graph,
+            pid_names: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl Detector for LateralMovementDetector {
+    fn name(&self) -> &str { "LateralMovementDetector" }
+
+    fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
+        match event {
+            SensorEvent::ProcessStarted { name, pid, .. } => {
+                self.pid_names.lock().unwrap().insert(*pid, name.clone());
+                None
+            }
+            SensorEvent::NetworkConnection { pid, .. } => {
+                let p = (*pid)?;
+                let name = {
+                    let names = self.pid_names.lock().unwrap();
+                    names.get(&p).cloned()?
+                };
+                if !is_shell_like(&name) {
+                    return None;
+                }
+                let graph = self.graph.lock().unwrap();
+                let children = graph.children_of(p);
+                let connections = graph.connections_of(p);
+                if children.is_empty() || connections.is_empty() {
+                    return None;
+                }
+                Some(ThreatAlert {
+                    severity: Severity::Critical,
+                    source: "LateralMovementDetector".to_string(),
+                    message: format!(
+                        "[ALERT] lateral movement: {} (pid {}) has {} child process(es) and {} outbound connection(s)",
+                        name, p, children.len(), connections.len()
+                    ),
+                    score: 50,
+                })
+            }
+        }
+    }
+}

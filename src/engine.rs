@@ -1,5 +1,5 @@
 use crate::behavior_graph::BehaviorGraph;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -57,7 +57,7 @@ pub struct ShieldEngine {
     sinks: Vec<Box<dyn Sink>>,
     score: Mutex<ThreatScore>,
     patterns: Vec<Box<dyn AttackPattern>>,
-    graph: Mutex<BehaviorGraph>,
+    graph: Arc<Mutex<BehaviorGraph>>,
 }
 
 impl ShieldEngine {
@@ -67,8 +67,12 @@ impl ShieldEngine {
             sinks: Vec::new(),
             score: Mutex::new(ThreatScore { score: 0, last_event: None }),
             patterns: Vec::new(),
-            graph: Mutex::new(BehaviorGraph::new()),
+            graph: Arc::new(Mutex::new(BehaviorGraph::new())),
         }
+    }
+
+    pub fn graph_handle(&self) -> Arc<Mutex<BehaviorGraph>> {
+        Arc::clone(&self.graph)
     }
 
     pub fn add_detector(&mut self, detector: Box<dyn Detector>) {

@@ -3,6 +3,7 @@ mod attack_simulator;
 mod alert_sink;
 mod engine;
 mod behavior_graph;
+mod lateral_movement_detector;
 mod response_engine;
 mod network_detector;
 mod network_sensor;
@@ -17,6 +18,7 @@ use threat_detector::ProcessThreatDetector;
 use network_detector::NetworkThreatDetector;
 use alert_sink::LoggerSink;
 use pattern_matcher::{MinerPattern, KeyloggerPattern, BotnetPattern};
+use lateral_movement_detector::LateralMovementDetector;
 use response_engine::{ResponseEngine, ProcessKillHandler, NetworkBlockHandler, EscalationHandler, PatternResponseHandler};
 
 fn main() {
@@ -54,6 +56,8 @@ fn main() {
     let mut engine = ShieldEngine::new();
     engine.add_detector(Box::new(ProcessThreatDetector::new()));
     engine.add_detector(Box::new(NetworkThreatDetector::new()));
+    let graph = engine.graph_handle();
+    engine.add_detector(Box::new(LateralMovementDetector::new(graph)));
     engine.add_pattern(Box::new(MinerPattern::new()));
     engine.add_pattern(Box::new(KeyloggerPattern::new()));
     engine.add_pattern(Box::new(BotnetPattern::new()));
