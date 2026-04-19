@@ -29,6 +29,7 @@ class ShieldVpnService : VpnService() {
     }
 
     private var tun: android.os.ParcelFileDescriptor? = null
+    private var forwarder: PacketForwarder? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var client: GatewayClient
 
@@ -75,11 +76,13 @@ class ShieldVpnService : VpnService() {
         Log.i(TAG, "TUN interface established")
 
         val tunFd = tun!!
+        val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
+        forwarder = fwd
         scope.launch {
             try {
                 PacketReader(
                     stream    = FileInputStream(tunFd.fileDescriptor),
-                    forwarder = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor)),
+                    forwarder = fwd,
                     parser    = PacketParser(),
                     tracker   = ConnectionTracker(this@ShieldVpnService),
                     client    = client,
@@ -92,6 +95,8 @@ class ShieldVpnService : VpnService() {
 
     private fun stopVpn() {
         Log.i(TAG, "VPN telemetry stopping")
+        forwarder?.shutdown()
+        forwarder = null
         scope.cancel()
         tun?.close()
         tun = null
