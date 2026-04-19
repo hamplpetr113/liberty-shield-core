@@ -4,9 +4,6 @@ use std::time::{Duration, Instant};
 use crate::config::ShieldConfig;
 use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
 
-const REPEAT_THRESHOLD: u32 = 3;
-const SCAN_THRESHOLD: u32 = 20;
-
 struct State {
     recent: Vec<(Instant, String)>,
 }
@@ -14,6 +11,10 @@ struct State {
 pub struct NetworkThreatDetector {
     state: Mutex<State>,
     suspicious_ports: Vec<u16>,
+    suspicious_port_score: u32,
+    repeat_score: u32,
+    repeat_threshold: u32,
+    scan_threshold: u32,
 }
 
 impl NetworkThreatDetector {
@@ -21,6 +22,10 @@ impl NetworkThreatDetector {
         NetworkThreatDetector {
             state: Mutex::new(State { recent: Vec::new() }),
             suspicious_ports: cfg.suspicious_ports.clone(),
+            suspicious_port_score: cfg.network_suspicious_port_score,
+            repeat_score: cfg.network_repeat_score,
+            repeat_threshold: cfg.network_repeat_threshold,
+            scan_threshold: cfg.network_scan_threshold,
         }
     }
 }
@@ -52,20 +57,20 @@ impl Detector for NetworkThreatDetector {
                 severity: Severity::Critical,
                 source: "NetworkThreatDetector".to_string(),
                 message: format!("[ALERT] connection to suspicious port {} ({})", remote_port, remote_ip),
-                score: 40,
+                score: self.suspicious_port_score,
             });
         }
 
-        if ip_count == REPEAT_THRESHOLD {
+        if ip_count == self.repeat_threshold {
             return Some(ThreatAlert {
                 severity: Severity::Warning,
                 source: "NetworkThreatDetector".to_string(),
                 message: format!("[ALERT] repeated connections from {} ({} in 60s)", remote_ip, ip_count),
-                score: 20,
+                score: self.repeat_score,
             });
         }
 
-        if total == SCAN_THRESHOLD {
+        if total == self.scan_threshold {
             return Some(ThreatAlert {
                 severity: Severity::Info,
                 source: "NetworkThreatDetector".to_string(),

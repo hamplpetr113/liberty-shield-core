@@ -1,9 +1,8 @@
 use crate::behavior_graph::BehaviorGraph;
+use crate::config::ShieldConfig;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-
-const ATTACK_WINDOW: Duration = Duration::from_secs(30);
 
 pub enum SensorEvent {
     ProcessStarted { name: String, pid: u32, parent_pid: u32 },
@@ -59,17 +58,21 @@ pub struct ShieldEngine {
     patterns: Vec<Box<dyn AttackPattern>>,
     graph: Arc<Mutex<BehaviorGraph>>,
     threshold: u32,
+    attack_window: Duration,
+    pattern_match_score: u32,
 }
 
 impl ShieldEngine {
-    pub fn new(threshold: u32) -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         ShieldEngine {
             detectors: Vec::new(),
             sinks: Vec::new(),
             score: Mutex::new(ThreatScore { score: 0, last_event: None }),
             patterns: Vec::new(),
             graph: Arc::new(Mutex::new(BehaviorGraph::new())),
-            threshold,
+            threshold: cfg.threat_score_threshold,
+            attack_window: Duration::from_secs(cfg.engine_attack_window_secs),
+            pattern_match_score: cfg.pattern_match_score,
         }
     }
 
@@ -104,7 +107,7 @@ impl ShieldEngine {
                     let mut ts = self.score.lock().unwrap();
                     let now = Instant::now();
                     if let Some(last) = ts.last_event {
-                        if now - last > ATTACK_WINDOW {
+                        if now - last > self.attack_window {
                             ts.score = 0;
                         }
                     }
@@ -141,17 +144,17 @@ impl ShieldEngine {
                     severity: Severity::Critical,
                     source: palert.pattern,
                     message: palert.message,
-                    score: 50,
+                    score: self.pattern_match_score,
                 };
                 for sink in &self.sinks {
                     sink.emit(&threat);
                 }
                 let mut ts = self.score.lock().unwrap();
                 let now = Instant::now();
-                if ts.last_event.map_or(false, |t| now - t > ATTACK_WINDOW) {
+                if ts.last_event.map_or(false, |t| now - t > self.attack_window) {
                     ts.score = 0;
                 }
-                ts.score += 50;
+                ts.score += self.pattern_match_score;
                 ts.last_event = Some(now);
             }
         }

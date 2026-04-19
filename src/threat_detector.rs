@@ -8,6 +8,8 @@ pub struct ProcessThreatDetector {
     pid_map: Mutex<HashMap<u32, String>>,
     suspicious_names: Vec<String>,
     suspicious_lineage: Vec<(String, String)>,
+    suspicious_name_score: u32,
+    suspicious_lineage_score: u32,
 }
 
 impl ProcessThreatDetector {
@@ -16,6 +18,8 @@ impl ProcessThreatDetector {
             pid_map: Mutex::new(HashMap::new()),
             suspicious_names: cfg.suspicious_process_names.clone(),
             suspicious_lineage: cfg.suspicious_lineage.clone(),
+            suspicious_name_score: cfg.process_suspicious_name_score,
+            suspicious_lineage_score: cfg.process_suspicious_lineage_score,
         }
     }
 }
@@ -45,7 +49,7 @@ impl Detector for ProcessThreatDetector {
                                 "[ALERT] suspicious process lineage: {} -> {}",
                                 parent_name, name
                             ),
-                            score: 30,
+                            score: self.suspicious_lineage_score,
                         });
                     }
                 }
@@ -55,7 +59,7 @@ impl Detector for ProcessThreatDetector {
                         severity: Severity::Critical,
                         source: self.name().to_string(),
                         message: format!("[ALERT] suspicious process {}", name),
-                        score: 40,
+                        score: self.suspicious_name_score,
                     })
                 } else {
                     None

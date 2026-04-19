@@ -12,6 +12,14 @@ pub struct ShieldConfig {
     pub threat_score_threshold: u32,
     pub suspicious_process_names: Vec<String>,
     pub suspicious_lineage: Vec<(String, String)>,
+    pub process_suspicious_name_score: u32,
+    pub process_suspicious_lineage_score: u32,
+    pub network_suspicious_port_score: u32,
+    pub network_repeat_score: u32,
+    pub network_repeat_threshold: u32,
+    pub network_scan_threshold: u32,
+    pub engine_attack_window_secs: u64,
+    pub pattern_match_score: u32,
 }
 
 impl Default for ShieldConfig {
@@ -48,6 +56,14 @@ impl Default for ShieldConfig {
                 ("powershell.exe".to_string(), "wscript.exe".to_string()),
                 ("powershell.exe".to_string(), "mshta.exe".to_string()),
             ],
+            process_suspicious_name_score: 40,
+            process_suspicious_lineage_score: 30,
+            network_suspicious_port_score: 40,
+            network_repeat_score: 20,
+            network_repeat_threshold: 3,
+            network_scan_threshold: 20,
+            engine_attack_window_secs: 30,
+            pattern_match_score: 50,
         }
     }
 }
@@ -107,6 +123,36 @@ impl ShieldConfig {
             if let Ok(n) = v.trim().parse::<u32>() {
                 if n > 0 { cfg.threat_score_threshold = n; }
             }
+        }
+        if let Some(v) = pairs.get("process.suspicious_name_score") {
+            if let Ok(n) = v.trim().parse::<u32>() { cfg.process_suspicious_name_score = n; }
+        }
+        if let Some(v) = pairs.get("process.suspicious_lineage_score") {
+            if let Ok(n) = v.trim().parse::<u32>() { cfg.process_suspicious_lineage_score = n; }
+        }
+        if let Some(v) = pairs.get("network.suspicious_port_score") {
+            if let Ok(n) = v.trim().parse::<u32>() { cfg.network_suspicious_port_score = n; }
+        }
+        if let Some(v) = pairs.get("network.repeat_score") {
+            if let Ok(n) = v.trim().parse::<u32>() { cfg.network_repeat_score = n; }
+        }
+        if let Some(v) = pairs.get("network.repeat_threshold") {
+            if let Ok(n) = v.trim().parse::<u32>() {
+                if n > 0 { cfg.network_repeat_threshold = n; }
+            }
+        }
+        if let Some(v) = pairs.get("network.scan_threshold") {
+            if let Ok(n) = v.trim().parse::<u32>() {
+                if n > 0 { cfg.network_scan_threshold = n; }
+            }
+        }
+        if let Some(v) = pairs.get("engine.attack_window_secs") {
+            if let Ok(n) = v.trim().parse::<u64>() {
+                if n > 0 { cfg.engine_attack_window_secs = n; }
+            }
+        }
+        if let Some(v) = pairs.get("pattern.match_score") {
+            if let Ok(n) = v.trim().parse::<u32>() { cfg.pattern_match_score = n; }
         }
         cfg
     }
