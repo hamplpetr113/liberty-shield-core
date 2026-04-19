@@ -58,7 +58,7 @@ fn main() {
     }
 
     let mut engine = ShieldEngine::new(cfg.threat_score_threshold);
-    engine.add_detector(Box::new(ProcessThreatDetector::new()));
+    engine.add_detector(Box::new(ProcessThreatDetector::new(&cfg)));
     engine.add_detector(Box::new(NetworkThreatDetector::new(&cfg)));
     let graph = engine.graph_handle();
     engine.add_detector(Box::new(LateralMovementDetector::new(graph, &cfg)));

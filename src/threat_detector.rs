@@ -1,22 +1,21 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::config::ShieldConfig;
 use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
-
-const SUSPICIOUS_LINEAGE: [(&str, &str); 3] = [
-    ("powershell.exe", "cmd.exe"),
-    ("powershell.exe", "wscript.exe"),
-    ("powershell.exe", "mshta.exe"),
-];
 
 pub struct ProcessThreatDetector {
     pid_map: Mutex<HashMap<u32, String>>,
+    suspicious_names: Vec<String>,
+    suspicious_lineage: Vec<(String, String)>,
 }
 
 impl ProcessThreatDetector {
-    pub fn new() -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         ProcessThreatDetector {
             pid_map: Mutex::new(HashMap::new()),
+            suspicious_names: cfg.suspicious_process_names.clone(),
+            suspicious_lineage: cfg.suspicious_lineage.clone(),
         }
     }
 }
@@ -37,8 +36,8 @@ impl Detector for ProcessThreatDetector {
                 let parent_lc = parent_name.to_lowercase();
                 let child_lc = name.to_lowercase();
 
-                for (p, c) in &SUSPICIOUS_LINEAGE {
-                    if parent_lc == *p && child_lc == *c {
+                for (p, c) in &self.suspicious_lineage {
+                    if parent_lc == p.as_str() && child_lc == c.as_str() {
                         return Some(ThreatAlert {
                             severity: Severity::Warning,
                             source: "ProcessThreatDetector".to_string(),
@@ -51,7 +50,7 @@ impl Detector for ProcessThreatDetector {
                     }
                 }
 
-                if is_suspicious(name) {
+                if self.suspicious_names.iter().any(|n| name.eq_ignore_ascii_case(n)) {
                     Some(ThreatAlert {
                         severity: Severity::Critical,
                         source: self.name().to_string(),
@@ -67,18 +66,3 @@ impl Detector for ProcessThreatDetector {
     }
 }
 
-pub fn is_suspicious(process_name: &str) -> bool {
-    let suspicious = [
-        "xmrig.exe",
-        "miner.exe",
-        "keylogger.exe",
-        "mimikatz.exe",
-        "hacktool.exe",
-        "rat.exe",
-        "trojan.exe",
-    ];
-
-    suspicious
-        .iter()
-        .any(|name| process_name.eq_ignore_ascii_case(name))
-}
