@@ -119,10 +119,17 @@ impl BehaviorGraph {
 
             .count();
 
-        format!(
+        let spawned = self.edges.iter()
+            .filter(|(_, _, e)| matches!(e, GraphEdge::Spawned))
+            .count();
 
-            "BehaviorGraph: {} processes, {} network connections, {} edges",
-            process_count, network_count, self.edges.len()
+        let connected_to = self.edges.iter()
+            .filter(|(_, _, e)| matches!(e, GraphEdge::ConnectedTo))
+            .count();
+
+        format!(
+            "BehaviorGraph: {} processes, {} network connections, {} edges ({} spawned, {} connected_to)",
+            process_count, network_count, self.edges.len(), spawned, connected_to
         )
     }
 }
