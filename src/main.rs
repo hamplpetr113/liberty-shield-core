@@ -1,4 +1,5 @@
 mod config;
+mod gateway;
 mod pattern_matcher;
 mod attack_simulator;
 mod alert_sink;
@@ -23,7 +24,8 @@ use pattern_matcher::{MinerPattern, KeyloggerPattern, BotnetPattern};
 use lateral_movement_detector::LateralMovementDetector;
 use response_engine::{ResponseEngine, ProcessKillHandler, NetworkBlockHandler, EscalationHandler, PatternResponseHandler};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let _lock = match self_protection::acquire_lock() {
         Ok(lock) => lock,
         Err(err) => {
@@ -72,5 +74,9 @@ fn main() {
     responder.add_handler(Box::new(EscalationHandler));
     responder.add_handler(Box::new(PatternResponseHandler));
     engine.add_sink(Box::new(responder));
-    engine.run(rx);
+    tokio::spawn(gateway::start(tx.clone()));
+
+    tokio::task::spawn_blocking(move || engine.run(rx))
+        .await
+        .unwrap();
 }
