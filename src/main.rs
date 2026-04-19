@@ -62,9 +62,9 @@ fn main() {
     engine.add_detector(Box::new(NetworkThreatDetector::new(&cfg)));
     let graph = engine.graph_handle();
     engine.add_detector(Box::new(LateralMovementDetector::new(graph, &cfg)));
-    engine.add_pattern(Box::new(MinerPattern::new()));
-    engine.add_pattern(Box::new(KeyloggerPattern::new()));
-    engine.add_pattern(Box::new(BotnetPattern::new()));
+    engine.add_pattern(Box::new(MinerPattern::new(&cfg)));
+    engine.add_pattern(Box::new(KeyloggerPattern::new(&cfg)));
+    engine.add_pattern(Box::new(BotnetPattern::new(&cfg)));
     engine.add_sink(Box::new(LoggerSink));
     let mut responder = ResponseEngine::new();
     responder.add_handler(Box::new(ProcessKillHandler));

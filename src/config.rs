@@ -12,6 +12,11 @@ pub struct ShieldConfig {
     pub threat_score_threshold: u32,
     pub suspicious_process_names: Vec<String>,
     pub suspicious_lineage: Vec<(String, String)>,
+    pub pattern_miner_keywords: Vec<String>,
+    pub pattern_miner_ports: Vec<u16>,
+    pub pattern_keylogger_keywords: Vec<String>,
+    pub pattern_botnet_ports: Vec<u16>,
+    pub pattern_botnet_host_threshold: u32,
     pub process_suspicious_name_score: u32,
     pub process_suspicious_lineage_score: u32,
     pub network_suspicious_port_score: u32,
@@ -56,6 +61,11 @@ impl Default for ShieldConfig {
                 ("powershell.exe".to_string(), "wscript.exe".to_string()),
                 ("powershell.exe".to_string(), "mshta.exe".to_string()),
             ],
+            pattern_miner_keywords: vec!["xmrig.exe".to_string()],
+            pattern_miner_ports: vec![4444],
+            pattern_keylogger_keywords: vec!["keylogger.exe".to_string()],
+            pattern_botnet_ports: vec![4444, 1337, 5555, 6666],
+            pattern_botnet_host_threshold: 2,
             process_suspicious_name_score: 40,
             process_suspicious_lineage_score: 30,
             network_suspicious_port_score: 40,
@@ -99,6 +109,27 @@ impl ShieldConfig {
                 if let (Ok(lo), Ok(hi)) = (parts[0].trim().parse::<u8>(), parts[1].trim().parse::<u8>()) {
                     cfg.safe_172_range = (lo, hi);
                 }
+            }
+        }
+        if let Some(v) = pairs.get("pattern.miner_keywords") {
+            let list: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if !list.is_empty() { cfg.pattern_miner_keywords = list; }
+        }
+        if let Some(v) = pairs.get("pattern.miner_ports") {
+            let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if !ports.is_empty() { cfg.pattern_miner_ports = ports; }
+        }
+        if let Some(v) = pairs.get("pattern.keylogger_keywords") {
+            let list: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if !list.is_empty() { cfg.pattern_keylogger_keywords = list; }
+        }
+        if let Some(v) = pairs.get("pattern.botnet_ports") {
+            let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if !ports.is_empty() { cfg.pattern_botnet_ports = ports; }
+        }
+        if let Some(v) = pairs.get("pattern.botnet_host_threshold") {
+            if let Ok(n) = v.trim().parse::<u32>() {
+                if n > 0 { cfg.pattern_botnet_host_threshold = n; }
             }
         }
         if let Some(v) = pairs.get("process.suspicious_names") {

@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::config::ShieldConfig;
 use crate::engine::{AttackPattern, PatternAlert, SensorEvent};
 
 const PATTERN_WINDOW: Duration = Duration::from_secs(60);
@@ -12,12 +13,16 @@ struct MinerState {
 
 pub struct MinerPattern {
     state: Mutex<MinerState>,
+    keywords: Vec<String>,
+    ports: Vec<u16>,
 }
 
 impl MinerPattern {
-    pub fn new() -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         MinerPattern {
             state: Mutex::new(MinerState { saw_miner: None, saw_port: None }),
+            keywords: cfg.pattern_miner_keywords.clone(),
+            ports: cfg.pattern_miner_ports.clone(),
         }
     }
 }
@@ -33,11 +38,16 @@ impl AttackPattern for MinerPattern {
         if s.saw_port.map_or(false,  |t| now - t > PATTERN_WINDOW) { s.saw_port  = None; }
 
         match event {
-            SensorEvent::ProcessStarted { name, .. }
-                if name.eq_ignore_ascii_case("xmrig.exe") => { s.saw_miner = Some(now); }
-            SensorEvent::NetworkConnection { remote_port, .. }
-                if *remote_port == 4444 => { s.saw_port = Some(now); }
-            _ => {}
+            SensorEvent::ProcessStarted { name, .. } => {
+                if self.keywords.iter().any(|k| name.eq_ignore_ascii_case(k)) {
+                    s.saw_miner = Some(now);
+                }
+            }
+            SensorEvent::NetworkConnection { remote_port, .. } => {
+                if self.ports.contains(remote_port) {
+                    s.saw_port = Some(now);
+                }
+            }
         }
 
         if s.saw_miner.is_some() && s.saw_port.is_some() {
@@ -45,7 +55,7 @@ impl AttackPattern for MinerPattern {
             s.saw_port  = None;
             Some(PatternAlert {
                 pattern: "MinerPattern".to_string(),
-                message: "[PATTERN] MinerPattern: xmrig.exe + connection to port 4444".to_string(),
+                message: "[PATTERN] MinerPattern: miner process + connection to mining port".to_string(),
             })
         } else {
             None
@@ -53,21 +63,20 @@ impl AttackPattern for MinerPattern {
     }
 }
 
-const BOTNET_THRESHOLD: usize = 2;
-const SUSPICIOUS_C2_PORTS: [u16; 4] = [4444, 1337, 5555, 6666];
-
 struct KeyloggerState {
     saw_process: Option<Instant>,
 }
 
 pub struct KeyloggerPattern {
     state: Mutex<KeyloggerState>,
+    keywords: Vec<String>,
 }
 
 impl KeyloggerPattern {
-    pub fn new() -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         KeyloggerPattern {
             state: Mutex::new(KeyloggerState { saw_process: None }),
+            keywords: cfg.pattern_keylogger_keywords.clone(),
         }
     }
 }
@@ -84,21 +93,23 @@ impl AttackPattern for KeyloggerPattern {
         }
 
         match event {
-            SensorEvent::ProcessStarted { name, .. }
-                if name.eq_ignore_ascii_case("keylogger.exe") => {
-                s.saw_process = Some(now);
+            SensorEvent::ProcessStarted { name, .. } => {
+                if self.keywords.iter().any(|k| name.eq_ignore_ascii_case(k)) {
+                    s.saw_process = Some(now);
+                }
             }
-            SensorEvent::NetworkConnection { remote_ip, .. } if s.saw_process.is_some() => {
-                s.saw_process = None;
-                return Some(PatternAlert {
-                    pattern: "KeyloggerPattern".to_string(),
-                    message: format!(
-                        "[PATTERN] KeyloggerPattern: keylogger.exe followed by network connection to {} (suspected exfiltration)",
-                        remote_ip
-                    ),
-                });
+            SensorEvent::NetworkConnection { remote_ip, .. } => {
+                if s.saw_process.is_some() {
+                    s.saw_process = None;
+                    return Some(PatternAlert {
+                        pattern: "KeyloggerPattern".to_string(),
+                        message: format!(
+                            "[PATTERN] KeyloggerPattern: keylogger process followed by network connection to {} (suspected exfiltration)",
+                            remote_ip
+                        ),
+                    });
+                }
             }
-            _ => {}
         }
         None
     }
@@ -110,12 +121,16 @@ struct BotnetState {
 
 pub struct BotnetPattern {
     state: Mutex<BotnetState>,
+    ports: Vec<u16>,
+    host_threshold: usize,
 }
 
 impl BotnetPattern {
-    pub fn new() -> Self {
+    pub fn new(cfg: &ShieldConfig) -> Self {
         BotnetPattern {
             state: Mutex::new(BotnetState { recent: Vec::new() }),
+            ports: cfg.pattern_botnet_ports.clone(),
+            host_threshold: cfg.pattern_botnet_host_threshold as usize,
         }
     }
 }
@@ -129,7 +144,7 @@ impl AttackPattern for BotnetPattern {
             SensorEvent::ProcessStarted { .. } => return None,
         };
 
-        if !SUSPICIOUS_C2_PORTS.contains(remote_port) {
+        if !self.ports.contains(remote_port) {
             return None;
         }
 
@@ -141,7 +156,7 @@ impl AttackPattern for BotnetPattern {
             s.recent.push((now, remote_ip.clone()));
         }
 
-        if s.recent.len() >= BOTNET_THRESHOLD {
+        if s.recent.len() >= self.host_threshold {
             let ips: Vec<String> = s.recent.iter().map(|(_, ip)| ip.clone()).collect();
             s.recent.clear();
             return Some(PatternAlert {
