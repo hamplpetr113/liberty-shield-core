@@ -3,43 +3,54 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::behavior_graph::BehaviorGraph;
+use crate::config::ShieldConfig;
 use crate::engine::{Detector, SensorEvent, Severity, ThreatAlert};
 
-const SHELL_PROCESSES: [&str; 4] = ["cmd.exe", "powershell.exe", "wscript.exe", "mshta.exe"];
-const COOLDOWN: Duration = Duration::from_secs(60);
-const PID_TTL: Duration  = Duration::from_secs(300);
-
-fn is_shell_like(name: &str) -> bool {
-    SHELL_PROCESSES.iter().any(|s| name.eq_ignore_ascii_case(s))
-}
-
-fn is_safe_destination(ip: &str, port: u16) -> bool {
-    if port == 53 { return true; }
-    if ip == "::1" { return true; }
-    let octets: Vec<&str> = ip.split('.').collect();
-    if octets.len() != 4 { return false; }
-    match octets[0] {
-        "127" => true,
-        "10"  => true,
-        "192" if octets[1] == "168" => true,
-        "172" => octets[1].parse::<u8>().map_or(false, |n| (16..=31).contains(&n)),
-        _ => false,
-    }
-}
+const PID_TTL: Duration = Duration::from_secs(300);
 
 pub struct LateralMovementDetector {
     graph: Arc<Mutex<BehaviorGraph>>,
     pid_names: Mutex<HashMap<u32, (String, Instant)>>,
     alerted: Mutex<HashMap<u32, Instant>>,
+    shell_processes: Vec<String>,
+    cooldown: Duration,
+    safe_ports: Vec<u16>,
+    safe_ip_prefixes: Vec<String>,
+    safe_172_range: (u8, u8),
 }
 
 impl LateralMovementDetector {
-    pub fn new(graph: Arc<Mutex<BehaviorGraph>>) -> Self {
+    pub fn new(graph: Arc<Mutex<BehaviorGraph>>, cfg: &ShieldConfig) -> Self {
         LateralMovementDetector {
             graph,
             pid_names: Mutex::new(HashMap::new()),
             alerted: Mutex::new(HashMap::new()),
+            shell_processes: cfg.lateral_shell_processes.clone(),
+            cooldown: cfg.lateral_cooldown,
+            safe_ports: cfg.safe_ports.clone(),
+            safe_ip_prefixes: cfg.safe_ip_prefixes.clone(),
+            safe_172_range: cfg.safe_172_range,
         }
+    }
+
+    fn is_shell_like(&self, name: &str) -> bool {
+        self.shell_processes.iter().any(|s| name.eq_ignore_ascii_case(s))
+    }
+
+    fn is_safe_destination(&self, ip: &str, port: u16) -> bool {
+        if self.safe_ports.contains(&port) { return true; }
+        if self.safe_ip_prefixes.iter().any(|p| ip.starts_with(p.as_str()) || ip == p.as_str()) {
+            return true;
+        }
+        if ip.split('.').next() == Some("172") {
+            if let Some(second) = ip.split('.').nth(1) {
+                if let Ok(n) = second.parse::<u8>() {
+                    let (lo, hi) = self.safe_172_range;
+                    return (lo..=hi).contains(&n);
+                }
+            }
+        }
+        false
     }
 }
 
@@ -55,7 +66,7 @@ impl Detector for LateralMovementDetector {
                     names.retain(|_, (_, t)| now.saturating_duration_since(*t) < PID_TTL);
                     names.insert(*pid, (name.clone(), now));
                 }
-                self.alerted.lock().unwrap().retain(|_, t| now.saturating_duration_since(*t) < COOLDOWN);
+                self.alerted.lock().unwrap().retain(|_, t| now.saturating_duration_since(*t) < self.cooldown);
                 None
             }
             SensorEvent::NetworkConnection { pid, .. } => {
@@ -64,7 +75,7 @@ impl Detector for LateralMovementDetector {
                     let names = self.pid_names.lock().unwrap();
                     names.get(&p).map(|(n, _)| n.clone())?
                 };
-                if !is_shell_like(&name) {
+                if !self.is_shell_like(&name) {
                     return None;
                 }
                 let (child_count, suspicious_count) = {
@@ -72,7 +83,7 @@ impl Detector for LateralMovementDetector {
                     let children = graph.children_of(p);
                     let connections = graph.connections_of(p);
                     let suspicious = connections.into_iter()
-                        .filter(|(ip, port)| !is_safe_destination(ip, *port))
+                        .filter(|(ip, port)| !self.is_safe_destination(ip, *port))
                         .collect::<Vec<_>>();
                     if children.is_empty() || suspicious.is_empty() {
                         return None;
@@ -83,7 +94,7 @@ impl Detector for LateralMovementDetector {
                     let mut alerted = self.alerted.lock().unwrap();
                     let now = Instant::now();
                     if let Some(&last) = alerted.get(&p) {
-                        if now.saturating_duration_since(last) < COOLDOWN {
+                        if now.saturating_duration_since(last) < self.cooldown {
                             return None;
                         }
                     }

@@ -1,3 +1,4 @@
+mod config;
 mod pattern_matcher;
 mod attack_simulator;
 mod alert_sink;
@@ -13,6 +14,7 @@ mod threat_detector;
 mod self_protection;
 
 use std::sync::mpsc;
+use config::ShieldConfig;
 use engine::ShieldEngine;
 use threat_detector::ProcessThreatDetector;
 use network_detector::NetworkThreatDetector;
@@ -33,6 +35,8 @@ fn main() {
     let simulate = std::env::args().any(|a| a == "--simulate");
 
     let (tx, rx) = mpsc::channel::<engine::SensorEvent>();
+
+    let cfg = ShieldConfig::load("liberty-shield.conf");
 
     logger::log("Liberty Shield core starting...");
 
@@ -57,7 +61,7 @@ fn main() {
     engine.add_detector(Box::new(ProcessThreatDetector::new()));
     engine.add_detector(Box::new(NetworkThreatDetector::new()));
     let graph = engine.graph_handle();
-    engine.add_detector(Box::new(LateralMovementDetector::new(graph)));
+    engine.add_detector(Box::new(LateralMovementDetector::new(graph, &cfg)));
     engine.add_pattern(Box::new(MinerPattern::new()));
     engine.add_pattern(Box::new(KeyloggerPattern::new()));
     engine.add_pattern(Box::new(BotnetPattern::new()));
