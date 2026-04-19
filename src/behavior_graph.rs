@@ -30,6 +30,8 @@ pub struct BehaviorGraph {
 
     pid_index: HashMap<u32, usize>,
 
+    pending: HashMap<u32, Vec<usize>>,
+
 }
 
 
@@ -45,6 +47,8 @@ impl BehaviorGraph {
             edges: Vec::new(),
 
             pid_index: HashMap::new(),
+
+            pending: HashMap::new(),
 
         }
 
@@ -66,6 +70,12 @@ impl BehaviorGraph {
 
         }
 
+        if let Some(net_indices) = self.pending.remove(&pid) {
+            for net_idx in net_indices {
+                self.edges.push((child_idx, net_idx, GraphEdge::ConnectedTo));
+            }
+        }
+
     }
 
 
@@ -76,6 +86,8 @@ impl BehaviorGraph {
         if let Some(p) = pid {
             if let Some(&proc_idx) = self.pid_index.get(&p) {
                 self.edges.push((proc_idx, net_idx, GraphEdge::ConnectedTo));
+            } else {
+                self.pending.entry(p).or_default().push(net_idx);
             }
         }
     }
@@ -131,6 +143,16 @@ mod tests {
         g.add_process(0, 1, "chrome.exe".to_string());
         g.add_network_connection("1.2.3.4".to_string(), 443, Some(1));
         assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1);
+        assert!(matches!(g.edges[0].2, GraphEdge::ConnectedTo));
+    }
+
+    #[test]
+    fn test_deferred_process_to_network_link() {
+        let mut g = BehaviorGraph::new();
+        g.add_network_connection("1.2.3.4".to_string(), 443, Some(1));
+        assert_eq!(g.edges.len(), 0);
+        g.add_process(0, 1, "chrome.exe".to_string());
         assert_eq!(g.edges.len(), 1);
         assert!(matches!(g.edges[0].2, GraphEdge::ConnectedTo));
     }
