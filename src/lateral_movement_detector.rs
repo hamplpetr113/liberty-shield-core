@@ -13,6 +13,20 @@ fn is_shell_like(name: &str) -> bool {
     SHELL_PROCESSES.iter().any(|s| name.eq_ignore_ascii_case(s))
 }
 
+fn is_safe_destination(ip: &str, port: u16) -> bool {
+    if port == 53 { return true; }
+    if ip == "::1" { return true; }
+    let octets: Vec<&str> = ip.split('.').collect();
+    if octets.len() != 4 { return false; }
+    match octets[0] {
+        "127" => true,
+        "10"  => true,
+        "192" if octets[1] == "168" => true,
+        "172" => octets[1].parse::<u8>().map_or(false, |n| (16..=31).contains(&n)),
+        _ => false,
+    }
+}
+
 pub struct LateralMovementDetector {
     graph: Arc<Mutex<BehaviorGraph>>,
     pid_names: Mutex<HashMap<u32, (String, Instant)>>,
@@ -53,14 +67,17 @@ impl Detector for LateralMovementDetector {
                 if !is_shell_like(&name) {
                     return None;
                 }
-                let (child_count, conn_count) = {
+                let (child_count, suspicious_count) = {
                     let graph = self.graph.lock().unwrap();
                     let children = graph.children_of(p);
                     let connections = graph.connections_of(p);
-                    if children.is_empty() || connections.is_empty() {
+                    let suspicious = connections.into_iter()
+                        .filter(|(ip, port)| !is_safe_destination(ip, *port))
+                        .collect::<Vec<_>>();
+                    if children.is_empty() || suspicious.is_empty() {
                         return None;
                     }
-                    (children.len(), connections.len())
+                    (children.len(), suspicious.len())
                 };
                 {
                     let mut alerted = self.alerted.lock().unwrap();
@@ -76,8 +93,8 @@ impl Detector for LateralMovementDetector {
                     severity: Severity::Critical,
                     source: "LateralMovementDetector".to_string(),
                     message: format!(
-                        "[ALERT] lateral movement: {} (pid {}) has {} child process(es) and {} outbound connection(s)",
-                        name, p, child_count, conn_count
+                        "[ALERT] lateral movement: {} (pid {}) has {} child process(es) and {} suspicious outbound connection(s)",
+                        name, p, child_count, suspicious_count
                     ),
                     score: 50,
                 })
