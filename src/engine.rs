@@ -110,7 +110,7 @@ impl ShieldEngine {
                         severity: Severity::Critical,
                         source: "ThreatScore".to_string(),
                         message: format!("[ALERT] threat score {} exceeded threshold (60)", total),
-                        score: total,
+                        score: 0,
                     };
                     for sink in &self.sinks {
                         sink.emit(&composite);
@@ -124,11 +124,18 @@ impl ShieldEngine {
                     severity: Severity::Critical,
                     source: palert.pattern,
                     message: palert.message,
-                    score: 0,
+                    score: 50,
                 };
                 for sink in &self.sinks {
                     sink.emit(&threat);
                 }
+                let mut ts = self.score.lock().unwrap();
+                let now = Instant::now();
+                if ts.last_event.map_or(false, |t| now - t > ATTACK_WINDOW) {
+                    ts.score = 0;
+                }
+                ts.score += 50;
+                ts.last_event = Some(now);
             }
         }
     }
