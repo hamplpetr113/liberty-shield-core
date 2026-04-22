@@ -52,7 +52,11 @@ class ShieldVpnService : VpnService() {
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
             ACTION_STOP -> { stopVpn(); START_NOT_STICKY }
-            else        -> { startVpn(); START_STICKY }
+            else        -> {
+                startVpn()
+                // If VPN failed to establish, don't let Android restart us into an infinite loop.
+                if (vpnState == VpnState.FAILED) START_NOT_STICKY else START_STICKY
+            }
         }
     }
 
@@ -78,51 +82,59 @@ class ShieldVpnService : VpnService() {
             return
         }
         transition(VpnState.STARTING)
-        startAsForeground()
+        try {
+            Log.i(TAG, "step 1: startForeground")
+            startAsForeground()
 
-        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-        client = GatewayClient(
-            context    = this,
-            gatewayUrl = BuildConfig.GATEWAY_URL,
-            deviceId   = deviceId,
-        )
+            Log.i(TAG, "step 2: init GatewayClient")
+            val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+            client = GatewayClient(
+                context    = this,
+                gatewayUrl = BuildConfig.GATEWAY_URL,
+                deviceId   = deviceId,
+            )
 
-        tun = Builder()
-            .setSession("Liberty Shield")
-            .addAddress("10.0.0.2", 32)
-            .addRoute("0.0.0.0", 0)
-            .addDnsServer("8.8.8.8")
-            .setMtu(1500)
-            .addDisallowedApplication(packageName)
-            .establish()
-            ?: run {
-                Log.e(TAG, "VPN establish() returned null — permission missing or revoked")
-                transition(VpnState.FAILED)
-                stopSelf()
-                return
+            Log.i(TAG, "step 3: Builder.establish()")
+            tun = Builder()
+                .setSession("Liberty Shield")
+                .addAddress("10.0.0.2", 32)
+                .addRoute("0.0.0.0", 0)
+                .addDnsServer("8.8.8.8")
+                .setMtu(1500)
+                .addDisallowedApplication(packageName)
+                .establish()
+                ?: run {
+                    Log.e(TAG, "establish() returned null — permission revoked or another VPN is active")
+                    transition(VpnState.FAILED)
+                    stopSelf()
+                    return
+                }
+
+            Log.i(TAG, "step 4: TUN established fd=${tun!!.fd}, starting relay")
+            val tunFd = tun!!
+            val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
+            forwarder = fwd
+            scope.launch {
+                try {
+                    PacketReader(
+                        stream    = FileInputStream(tunFd.fileDescriptor),
+                        forwarder = fwd,
+                        parser    = PacketParser(),
+                        tracker   = ConnectionTracker(this@ShieldVpnService),
+                        client    = client,
+                    ).run()
+                    Log.i(TAG, "PacketReader exited cleanly")
+                } catch (e: IOException) {
+                    Log.w(TAG, "PacketReader exited: ${e.message}")
+                }
             }
-
-        Log.i(TAG, "TUN interface established")
-
-        val tunFd = tun!!
-        val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
-        forwarder = fwd
-        scope.launch {
-            try {
-                PacketReader(
-                    stream    = FileInputStream(tunFd.fileDescriptor),
-                    forwarder = fwd,
-                    parser    = PacketParser(),
-                    tracker   = ConnectionTracker(this@ShieldVpnService),
-                    client    = client,
-                ).run()
-                Log.i(TAG, "PacketReader exited cleanly")
-            } catch (e: IOException) {
-                Log.w(TAG, "PacketReader exited: ${e.message}")
-            }
+            startHeartbeat()
+            transition(VpnState.RUNNING)
+        } catch (e: Exception) {
+            Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
+            transition(VpnState.FAILED)
+            stopSelf()
         }
-        startHeartbeat()
-        transition(VpnState.RUNNING)
     }
 
     private fun stopVpn() {

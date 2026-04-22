@@ -38,7 +38,7 @@ class VpnPermissionActivity : Activity() {
     private fun onPermissionGranted() {
         val intent = Intent(this, ShieldVpnService::class.java)
             .setAction(ShieldVpnService.ACTION_START)
-        startService(intent)
+        startForegroundService(intent)
         finish()
     }
 }
