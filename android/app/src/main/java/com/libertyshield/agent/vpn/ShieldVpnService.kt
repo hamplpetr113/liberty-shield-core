@@ -170,7 +170,11 @@ class ShieldVpnService : VpnService() {
             .setContentText("Network telemetry active")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .build()
-        startForeground(NOTIF_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
     }
 
     companion object {

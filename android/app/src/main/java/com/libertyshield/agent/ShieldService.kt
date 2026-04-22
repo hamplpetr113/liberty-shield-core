@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
-import android.net.VpnService
 import com.libertyshield.agent.monitors.AppMonitor
 import com.libertyshield.agent.monitors.SensorMonitor
 import com.libertyshield.agent.vpn.ShieldVpnService
@@ -49,16 +48,10 @@ class ShieldService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startVpnTelemetry() {
-        if (VpnService.prepare(this) != null) {
-            // Permission not yet granted — start VpnPermissionActivity to show the system dialog.
-            val i = Intent(this, VpnPermissionActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
-        } else {
-            val i = Intent(this, ShieldVpnService::class.java)
-                .setAction(ShieldVpnService.ACTION_START)
-            startForegroundService(i)
-        }
+        // VPN consent is obtained by LauncherActivity before this service starts.
+        // ShieldVpnService.startVpn() handles revoked permission via FAILED state.
+        startForegroundService(Intent(this, ShieldVpnService::class.java)
+            .setAction(ShieldVpnService.ACTION_START))
     }
 
     private fun startAsForeground() {
@@ -76,6 +69,10 @@ class ShieldService : Service() {
             .setContentText("Telemetry active")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .build()
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(1, notification)
+        }
     }
 }
