@@ -12,6 +12,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
+        buildConfigField("String", "GATEWAY_URL", "\"http://10.0.2.2:8080/sensor/event\"")
+    }
+    buildFeatures {
+        buildConfig = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8

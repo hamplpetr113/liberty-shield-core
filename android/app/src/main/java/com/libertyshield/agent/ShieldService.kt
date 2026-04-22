@@ -25,7 +25,7 @@ class ShieldService : Service() {
 
         client = GatewayClient(
             context    = this,
-            gatewayUrl = "http://10.0.2.2:8080/sensor/event",  // 10.0.2.2 = emulator host loopback
+            gatewayUrl = BuildConfig.GATEWAY_URL,
             deviceId   = deviceId,
         )
 

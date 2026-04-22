@@ -19,7 +19,8 @@ class PacketForwarder(
     private val tunOut: FileOutputStream,
 ) {
     private val scope      = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val writeMutex = Mutex()   // guards concurrent writes to the single tunOut fd
+    private val writeMutex  = Mutex()   // guards concurrent writes to the single tunOut fd
+    private val tcpSessions = TcpSessionTable()
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
     // We copy it here before handing off to a coroutine.
@@ -29,12 +30,15 @@ class PacketForwarder(
             PacketParser.PROTO_UDP ->
                 scope.launch { forwardUdp(buf.copyOf(len), len, packet) }
             PacketParser.PROTO_TCP ->
-                Log.d(TAG, "TCP not yet supported — dropping ${packet.dstIp}:${packet.dstPort}")
+                scope.launch { dispatchTcp(buf.copyOf(len), packet) }
             else -> {}
         }
     }
 
-    fun shutdown() = scope.cancel()
+    fun shutdown() {
+        tcpSessions.closeAll()
+        scope.cancel()
+    }
 
     private suspend fun forwardUdp(buf: ByteArray, len: Int, packet: ParsedPacket) {
         val ihl          = (buf[0].toInt() and 0x0F) * 4
@@ -44,40 +48,59 @@ class PacketForwarder(
 
         val payload = buf.copyOfRange(payloadStart, len)
         try {
-            val socket = DatagramSocket()
-            if (!vpnService.protect(socket)) {
-                // protect() failed — sending would loop back into our own VPN
-                Log.w(TAG, "UDP protect() failed — dropping ${packet.dstIp}:${packet.dstPort}")
-                socket.close()
-                return
-            }
-            socket.soTimeout = SOCKET_TIMEOUT_MS
+            DatagramSocket().use { socket ->
+                if (!vpnService.protect(socket)) {
+                    // protect() failed — sending would loop back into our own VPN
+                    Log.w(TAG, "UDP protect() failed — dropping ${packet.dstIp}:${packet.dstPort}")
+                    return  // use{} finally block closes the socket
+                }
+                socket.soTimeout = SOCKET_TIMEOUT_MS
 
-            socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
-            Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
+                socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
+                Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
 
-            // Wait for one response (covers DNS and simple request-response protocols).
-            // Multi-packet UDP flows (QUIC, video) need a persistent-socket relay — TODO next sprint.
-            val respBuf   = ByteArray(MAX_UDP_PAYLOAD)
-            val respDgram = DatagramPacket(respBuf, respBuf.size)
-            try {
-                socket.receive(respDgram)
-                val response = buildIpv4UdpPacket(
-                    srcIp   = packet.dstIp,   // server → app
-                    dstIp   = packet.srcIp,
-                    srcPort = packet.dstPort,
-                    dstPort = packet.srcPort,
-                    payload = respBuf.copyOf(respDgram.length),
-                )
-                writeMutex.withLock { tunOut.write(response) }
-                Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
-            } catch (_: java.net.SocketTimeoutException) {
-                // Fire-and-forget UDP or server timed out — not an error
+                // Wait for one response (covers DNS and simple request-response protocols).
+                // Multi-packet UDP flows (QUIC, video) need a persistent-socket relay — TODO next sprint.
+                val respBuf   = ByteArray(MAX_UDP_PAYLOAD)
+                val respDgram = DatagramPacket(respBuf, respBuf.size)
+                try {
+                    socket.receive(respDgram)
+                    val response = buildIpv4UdpPacket(
+                        srcIp   = packet.dstIp,   // server → app
+                        dstIp   = packet.srcIp,
+                        srcPort = packet.dstPort,
+                        dstPort = packet.srcPort,
+                        payload = respBuf.copyOf(respDgram.length),
+                    )
+                    writeMutex.withLock { tunOut.write(response); tunOut.flush() }
+                    Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
+                } catch (_: java.net.SocketTimeoutException) {
+                    // Fire-and-forget UDP or server timed out — not an error
+                }
             }
-            socket.close()
         } catch (e: Exception) {
             Log.w(TAG, "UDP forward error ${packet.dstIp}:${packet.dstPort}: ${e.message}")
         }
+    }
+
+    private suspend fun dispatchTcp(buf: ByteArray, packet: ParsedPacket) {
+        val isSyn = packet.tcpFlags and TcpPacketBuilder.FLAG_SYN != 0 &&
+                    packet.tcpFlags and TcpPacketBuilder.FLAG_ACK == 0
+        val key = TcpSession.key(packet.srcIp, packet.srcPort, packet.dstIp, packet.dstPort)
+        val session = tcpSessions.getOrCreate(key, isSyn) {
+            TcpSession(
+                srcIp      = packet.srcIp,
+                srcPort    = packet.srcPort,
+                dstIp      = packet.dstIp,
+                dstPort    = packet.dstPort,
+                vpnService = vpnService,
+                tunOut     = tunOut,
+                writeMutex = writeMutex,
+                scope      = scope,
+                onClose    = { tcpSessions.remove(key) },
+            )
+        } ?: return
+        session.handle(buf)
     }
 
     // Constructs a raw IPv4 + UDP packet to write back into the TUN fd.

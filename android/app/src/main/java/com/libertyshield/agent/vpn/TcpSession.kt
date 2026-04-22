@@ -21,6 +21,7 @@ class TcpSession(
     private val tunOut: FileOutputStream,
     private val writeMutex: Mutex,
     private val scope: CoroutineScope,
+    private val onClose: () -> Unit = {},
 ) {
     private enum class State { CLOSED, SYN_RECEIVED, ESTABLISHED, FIN_WAIT, CLOSED_FINAL }
 
@@ -207,6 +208,7 @@ class TcpSession(
         runCatching { server?.close() }
         server = null
         Log.d(TAG, "torn down $srcIp:$srcPort->$dstIp:$dstPort")
+        onClose()
     }
 
     companion object {

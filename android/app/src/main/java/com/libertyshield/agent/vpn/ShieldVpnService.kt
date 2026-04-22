@@ -8,6 +8,7 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.libertyshield.agent.BuildConfig
 import com.libertyshield.agent.GatewayClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +56,7 @@ class ShieldVpnService : VpnService() {
         val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         client = GatewayClient(
             context    = this,
-            gatewayUrl = "http://10.0.2.2:8080/sensor/event",
+            gatewayUrl = BuildConfig.GATEWAY_URL,
             deviceId   = deviceId,
         )
 
