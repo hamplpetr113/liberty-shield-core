@@ -177,7 +177,7 @@ class TcpSession(
             try {
                 val inp = sock.getInputStream()
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
-                var n: Int
+                var n = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
                     val chunk = readBuf.copyOf(n)
                     sessionMutex.withLock {
