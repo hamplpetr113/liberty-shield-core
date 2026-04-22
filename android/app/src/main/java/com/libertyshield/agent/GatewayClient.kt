@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.libertyshield.agent.models.SensorEvent
+import com.libertyshield.agent.vpn.VpnStats
 import kotlinx.coroutines.*
 import java.net.HttpURLConnection
 import java.net.URL
@@ -31,9 +32,11 @@ class GatewayClient(
             val item = synchronized(queue) { queue.peekFirst() }
             if (item != null && isOnline()) {
                 if (post(item)) {
+                    VpnStats.gwPostOk.incrementAndGet()
                     synchronized(queue) { queue.pollFirst() }
                     backoffMs = 2_000L
                 } else {
+                    VpnStats.gwPostFail.incrementAndGet()
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                 }

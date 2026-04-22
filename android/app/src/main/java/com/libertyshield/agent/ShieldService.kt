@@ -40,7 +40,8 @@ class ShieldService : Service() {
     override fun onDestroy() {
         sensorMonitor.stop()
         appMonitor.stop()
-        stopService(Intent(this, ShieldVpnService::class.java))
+        startService(Intent(this, ShieldVpnService::class.java)
+            .setAction(ShieldVpnService.ACTION_STOP))
         client.shutdown()
         super.onDestroy()
     }
@@ -56,7 +57,7 @@ class ShieldService : Service() {
         } else {
             val i = Intent(this, ShieldVpnService::class.java)
                 .setAction(ShieldVpnService.ACTION_START)
-            startService(i)
+            startForegroundService(i)
         }
     }
 

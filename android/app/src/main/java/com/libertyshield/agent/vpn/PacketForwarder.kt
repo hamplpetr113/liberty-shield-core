@@ -57,6 +57,7 @@ class PacketForwarder(
                 socket.soTimeout = SOCKET_TIMEOUT_MS
 
                 socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
+                VpnStats.udpRequestsSent.incrementAndGet()
                 Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
 
                 // Wait for one response (covers DNS and simple request-response protocols).
@@ -65,6 +66,7 @@ class PacketForwarder(
                 val respDgram = DatagramPacket(respBuf, respBuf.size)
                 try {
                     socket.receive(respDgram)
+                    VpnStats.udpResponsesRecv.incrementAndGet()
                     val response = buildIpv4UdpPacket(
                         srcIp   = packet.dstIp,   // server → app
                         dstIp   = packet.srcIp,
@@ -79,6 +81,7 @@ class PacketForwarder(
                 }
             }
         } catch (e: Exception) {
+            VpnStats.udpErrors.incrementAndGet()
             Log.w(TAG, "UDP forward error ${packet.dstIp}:${packet.dstPort}: ${e.message}")
         }
     }
@@ -88,6 +91,8 @@ class PacketForwarder(
                     packet.tcpFlags and TcpPacketBuilder.FLAG_ACK == 0
         val key = TcpSession.key(packet.srcIp, packet.srcPort, packet.dstIp, packet.dstPort)
         val session = tcpSessions.getOrCreate(key, isSyn) {
+            VpnStats.tcpSessionsCreated.incrementAndGet()
+            VpnStats.tcpSessionsActive.incrementAndGet()
             TcpSession(
                 srcIp      = packet.srcIp,
                 srcPort    = packet.srcPort,
@@ -97,9 +102,14 @@ class PacketForwarder(
                 tunOut     = tunOut,
                 writeMutex = writeMutex,
                 scope      = scope,
-                onClose    = { tcpSessions.remove(key) },
+                onClose    = {
+                    tcpSessions.remove(key)
+                    VpnStats.tcpSessionsActive.decrementAndGet()
+                    VpnStats.tcpSessionsClosed.incrementAndGet()
+                },
             )
         } ?: return
+        VpnStats.tcpPacketsIn.incrementAndGet()
         session.handle(buf)
     }
 
