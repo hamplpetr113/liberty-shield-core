@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    ".",
+    "crates/liberty-controlled-chaos",
+]
+resolver = "2"
+
 [package]
 name = "liberty-shield"
 version = "0.1.0"
