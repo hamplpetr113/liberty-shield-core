@@ -1,0 +1,244 @@
+# Liberty Dev Orchestrator — Task Schema v0.1
+#
+# This file defines the schema for task.yaml.
+# Every field is documented inline.
+# An annotated example follows the schema.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Top-level structure
+# -------------------
+# version: string (required)
+#   Schema version. Must be "1.0" for this orchestrator release.
+#
+# tasks: list of Task (required, min 1)
+#   Ordered task queue. Tasks are executed in list order.
+#   A task is not removed until it reaches COMMITTED or FAILED.
+
+# ── Task object ───────────────────────────────────────────────────────────────
+#
+# id: string (required, unique within file)
+#   Stable identifier used in checkpoints and logs.
+#   Recommended format: "task-NNN" or "sprint-N-phase-N-step-N".
+#
+# description: string (required)
+#   Human-readable description of what the task should accomplish.
+#   Injected verbatim into the provider prompt.
+#
+# type: enum (required)
+#   One of: implementation | refactor | fix | test | docs
+#   Informs prompt framing (e.g. "fix" tasks prepend the failing output).
+#
+# priority: integer (optional, default 0)
+#   Lower number = higher priority. Currently unused in v0.1 ordering
+#   (tasks execute in list order) but reserved for future preemption.
+#
+# context: Context object (optional)
+#   Additional contextual material injected into the provider prompt.
+#
+# allowed_files: list of string (required, min 1)
+#   Relative paths (from repo root) the provider MAY create or modify.
+#   The test gate rejects any diff that touches files outside this list.
+#   Glob patterns NOT supported in v0.1 — explicit paths only.
+#
+# forbidden_files: list of string (optional)
+#   Relative paths the provider must NEVER touch, regardless of
+#   allowed_files. Takes precedence over allowed_files.
+#   Typically contains frozen modules and security-critical files.
+#   Listed explicitly in the provider prompt.
+#
+# required_commands: list of Command (required, min 1)
+#   Shell commands that must all exit 0 for the test gate to pass.
+#   Executed in order. Later commands may be skipped if an earlier
+#   one fails (controlled by skip_on_prior_failure).
+#
+# commit_message_template: string (required)
+#   Message used for the git commit if the gate passes.
+#   Supports one substitution: {task_id}.
+#
+# max_attempts: integer (optional, default 3)
+#   Maximum number of times the task may be submitted to a provider
+#   from scratch (each attempt resets repair_attempt to 0).
+#   On exhaustion the task is marked FAILED and the queue advances.
+#
+# max_repair_attempts: integer (optional, default 5)
+#   Maximum repair iterations within a single attempt.
+#   On exhaustion the working tree is rolled back and the attempt counter
+#   increments (up to max_attempts).
+#
+# timeout_seconds: integer (optional, default 600)
+#   Maximum wall-clock seconds allowed for a single provider call.
+#   Includes file-writing time but excludes test execution time.
+#   On timeout the provider call is treated as an error and the
+#   provider enters a short cooldown (30 s).
+#
+# preferred_provider: string (optional)
+#   Provider id to try first for this task, overriding the default
+#   priority order. Falls back to normal priority if unavailable.
+
+# ── Context object ────────────────────────────────────────────────────────────
+#
+# repo_path: string (optional, default ".")
+#   Path to the repository root. May be absolute or relative to CWD.
+#
+# sprint: string (optional)
+#   Human label injected into the prompt preamble for context.
+#
+# reference_docs: list of string (optional)
+#   Relative paths to design documents, specs, or README files.
+#   Their full contents are prepended to the provider prompt.
+#   Keep total size under the provider's context limit.
+#
+# background: string (optional)
+#   Free-form text injected into the prompt after reference_docs.
+#   Use for constraints, architecture decisions, or cross-task context
+#   that is not captured in a doc file.
+
+# ── Command object ────────────────────────────────────────────────────────────
+#
+# cmd: string (required)
+#   Shell command to execute. Run via sh -c on Unix / cmd /c on Windows.
+#
+# timeout_seconds: integer (optional, default 120)
+#   Per-command timeout. Exceeding it counts as a test failure.
+#
+# working_dir: string (optional, default repo_path)
+#   Directory in which to run the command.
+#
+# skip_on_prior_failure: boolean (optional, default true)
+#   If true, this command is skipped (marked SKIPPED, not FAILED) when
+#   a preceding required_command already failed.
+#   Set to false for commands that must always run (e.g. linters that
+#   produce output useful for repair even after a build failure).
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANNOTATED EXAMPLE
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "1.0"
+
+tasks:
+
+  # ── Example 1: Implementation task ─────────────────────────────────────────
+  - id: "task-001"
+    description: >
+      Implement crates/liberty-controlled-chaos/src/path_fragmenter.rs
+      and update src/lib.rs according to the design in
+      docs/controlled-chaos/path_fragmenter_design.md.
+      The module must be deterministic, side-effect-free, and include
+      all 18 unit tests specified in the design document section 12.
+    type: implementation
+    priority: 1
+
+    context:
+      repo_path: "."
+      sprint: "Sprint 6 Phase 2"
+      reference_docs:
+        - "docs/controlled-chaos/path_fragmenter_design.md"
+        - "docs/controlled-chaos/shadow_probability_model.md"
+      background: >
+        route_shadower.rs (Phase 1) is frozen and must not be modified.
+        The three Sprint 5 stub modules are also frozen.
+        This task produces path_fragmenter.rs only.
+
+    allowed_files:
+      - "crates/liberty-controlled-chaos/src/path_fragmenter.rs"
+      - "crates/liberty-controlled-chaos/src/lib.rs"
+
+    forbidden_files:
+      - "crates/liberty-controlled-chaos/src/route_shadower.rs"
+      - "crates/liberty-controlled-chaos/src/temporal_decoupler.rs"
+      - "crates/liberty-controlled-chaos/src/traffic_classifier.rs"
+      - "crates/liberty-controlled-chaos/src/correlation_score_engine.rs"
+      - "Cargo.toml"
+      - "src/main.rs"
+
+    required_commands:
+      - cmd: "cargo build"
+        timeout_seconds: 120
+        skip_on_prior_failure: false
+
+      - cmd: "cargo test -p liberty-controlled-chaos"
+        timeout_seconds: 60
+        skip_on_prior_failure: true
+
+      - cmd: "cargo clippy -p liberty-controlled-chaos -- -D warnings"
+        timeout_seconds: 60
+        skip_on_prior_failure: false   # always run; clippy output aids repair
+
+    commit_message_template: "Sprint 6 Phase 2: implement PathFragmenter"
+
+    max_attempts: 3
+    max_repair_attempts: 5
+    timeout_seconds: 600
+    preferred_provider: "claude-code"
+
+  # ── Example 2: Fix task ─────────────────────────────────────────────────────
+  - id: "task-002"
+    description: >
+      Fix the TLS handshake corruption in the Android VPN TCP relay.
+      The root cause is an incorrect seq/ack calculation in TcpSession.kt.
+      Refer to the investigation notes in the background field.
+    type: fix
+    priority: 1
+
+    context:
+      repo_path: "android"
+      sprint: "Android VPN Phase 3"
+      reference_docs: []
+      background: >
+        Chrome shows ERR_SSL_VERSION_OR_CIPHER_MISMATCH.
+        Suspected: relaySeq drift in TcpSession.kt after SYN-ACK.
+        The buildData() method may be using an stale relaySeq value.
+        TcpPacketBuilder.kt checksum logic is known-good; do not touch it.
+
+    allowed_files:
+      - "android/app/src/main/java/com/libertyshield/agent/vpn/TcpSession.kt"
+      - "android/app/src/main/java/com/libertyshield/agent/vpn/PacketForwarder.kt"
+
+    forbidden_files:
+      - "android/app/src/main/java/com/libertyshield/agent/vpn/TcpPacketBuilder.kt"
+      - "android/app/src/main/java/com/libertyshield/agent/vpn/ShieldVpnService.kt"
+
+    required_commands:
+      - cmd: "./gradlew assembleDebug"
+        working_dir: "android"
+        timeout_seconds: 300
+        skip_on_prior_failure: false
+
+    commit_message_template: "Fix VPN TCP relay seq/ack drift (task {task_id})"
+
+    max_attempts: 2
+    max_repair_attempts: 3
+    timeout_seconds: 900
+    preferred_provider: "claude-code"
+
+  # ── Example 3: Test task ────────────────────────────────────────────────────
+  - id: "task-003"
+    description: >
+      Add unit tests for route_shadower.rs covering the boundary condition
+      where correlation_score is exactly 0.50 (should not escalate) and
+      exactly 0.75 (should not trigger PARANOID floor — only > 0.75 does).
+    type: test
+
+    context:
+      repo_path: "."
+      sprint: "Sprint 6 regression hardening"
+
+    allowed_files:
+      - "crates/liberty-controlled-chaos/src/route_shadower.rs"
+
+    forbidden_files:
+      - "crates/liberty-controlled-chaos/src/path_fragmenter.rs"
+
+    required_commands:
+      - cmd: "cargo test -p liberty-controlled-chaos"
+        timeout_seconds: 60
+
+      - cmd: "cargo clippy -p liberty-controlled-chaos -- -D warnings"
+        timeout_seconds: 60
+        skip_on_prior_failure: false
+
+    commit_message_template: "Add boundary tests for correlation escalation rules"
+    max_attempts: 2
+    max_repair_attempts: 3
+    timeout_seconds: 300
