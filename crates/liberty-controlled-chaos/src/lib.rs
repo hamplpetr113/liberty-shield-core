@@ -15,6 +15,7 @@ pub mod onion_cell_protocol;
 pub mod onion_layer;
 pub mod path_fragmenter;
 
+pub mod mesh_simulator;
 pub mod protocol_runtime;
 pub mod relay_protocol;
 pub mod replay_protection;
