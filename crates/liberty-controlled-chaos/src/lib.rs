@@ -2,6 +2,7 @@ pub mod cell_encoder;
 pub mod correlation_score_engine;
 pub mod mesh_router;
 pub mod noise_link;
+pub mod onion_layer;
 pub mod path_fragmenter;
 
 pub mod route_shadower;
