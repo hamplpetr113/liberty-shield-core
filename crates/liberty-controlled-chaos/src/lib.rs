@@ -1,6 +1,8 @@
 pub mod cell_encoder;
 pub mod correlation_score_engine;
+pub mod noise_link;
 pub mod path_fragmenter;
+
 pub mod route_shadower;
 pub mod runtime_boundary;
 pub mod stream_mux;

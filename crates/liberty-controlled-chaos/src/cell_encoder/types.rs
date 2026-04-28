@@ -64,13 +64,22 @@ pub struct Cell {
 }
 
 impl Cell {
+    /// Construct a `Cell` from a raw 1450-byte buffer produced by decryption.
+    /// `pub(crate)` so that `NoiseLink` can reconstruct a `Cell` after decrypting
+    /// an `EncryptedCell` without exposing the constructor to external crates.
+    pub(crate) fn from_raw(data: [u8; CELL_SIZE]) -> Self {
+        Self { data }
+    }
+
     /// Parse and return the 43-byte header.
     pub fn header(&self) -> CellHeader {
         CellHeader {
             version: self.data[OFF_VERSION],
             flags: self.data[OFF_FLAGS],
             stream_id: u64::from_le_bytes(
-                self.data[OFF_STREAM_ID..OFF_STREAM_ID + 8].try_into().unwrap(),
+                self.data[OFF_STREAM_ID..OFF_STREAM_ID + 8]
+                    .try_into()
+                    .unwrap(),
             ),
             sequence_number: u64::from_le_bytes(
                 self.data[OFF_SEQ..OFF_SEQ + 8].try_into().unwrap(),
@@ -79,10 +88,14 @@ impl Cell {
                 self.data[OFF_PATH_ID..OFF_PATH_ID + 8].try_into().unwrap(),
             ),
             fragment_id: u64::from_le_bytes(
-                self.data[OFF_FRAGMENT_ID..OFF_FRAGMENT_ID + 8].try_into().unwrap(),
+                self.data[OFF_FRAGMENT_ID..OFF_FRAGMENT_ID + 8]
+                    .try_into()
+                    .unwrap(),
             ),
             payload_length: u16::from_le_bytes(
-                self.data[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2].try_into().unwrap(),
+                self.data[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2]
+                    .try_into()
+                    .unwrap(),
             ),
         }
     }
@@ -90,7 +103,9 @@ impl Cell {
     /// Slice of the actual payload bytes (length = `header.payload_length`).
     pub fn payload_bytes(&self) -> &[u8] {
         let len = u16::from_le_bytes(
-            self.data[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2].try_into().unwrap(),
+            self.data[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2]
+                .try_into()
+                .unwrap(),
         ) as usize;
         &self.data[HEADER_SIZE..HEADER_SIZE + len]
     }

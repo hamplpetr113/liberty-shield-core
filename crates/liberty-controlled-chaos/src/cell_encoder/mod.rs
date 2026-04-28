@@ -9,4 +9,6 @@ mod encoder;
 pub mod types;
 
 pub use encoder::CellEncoder;
-pub use types::{Cell, CellEncoderError, CellHeader, CELL_SIZE, HEADER_SIZE, MAX_PAYLOAD};
+pub use types::{
+    CELL_SIZE, CELL_VERSION, Cell, CellEncoderError, CellHeader, HEADER_SIZE, MAX_PAYLOAD,
+};
