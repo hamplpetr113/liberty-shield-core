@@ -1,6 +1,7 @@
 pub mod correlation_score_engine;
 pub mod path_fragmenter;
 pub mod route_shadower;
+pub mod runtime_boundary;
 pub mod temporal_decoupler;
 pub mod traffic_classifier;
 pub mod transmitter;
