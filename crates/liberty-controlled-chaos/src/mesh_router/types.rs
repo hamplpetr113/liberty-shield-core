@@ -30,4 +30,10 @@ pub enum RoutingError {
     NoRoutesAvailable,
     /// A route with the same `RouteId` already exists.
     RouteAlreadyExists(RouteId),
+    /// The path's TTL reached zero before all hops were traversed.
+    RouteExpired(RouteId),
+    /// All hops in the path have been traversed; route is finished.
+    RouteComplete(RouteId),
+    /// A repeated peer address was detected in the path, indicating a loop.
+    RoutingLoop(RouteId),
 }

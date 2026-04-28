@@ -8,10 +8,12 @@
 //!
 //! Contains no socket logic and no unsafe code.
 
+mod route_path;
 mod router;
 mod routing_table;
 pub mod types;
 
+pub use route_path::{PathTable, RoutePath};
 pub use router::MeshRouter;
 pub use routing_table::RoutingTable;
 pub use types::{NodeId, Route, RouteId, RoutingError};
@@ -201,5 +203,163 @@ mod tests {
         let hop1 = r1.forward(&dummy_cell(), RouteId(2)).unwrap();
         let hop2 = r2.forward(&dummy_cell(), RouteId(2)).unwrap();
         assert_eq!(hop1, hop2, "same inputs must always yield same next-hop");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-hop RoutePath tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn make_path(id: u64, ports: &[u16], ttl: u32) -> RoutePath {
+        let hops = ports.iter().map(|&p| peer(p)).collect();
+        RoutePath::new(RouteId(id), hops, ttl)
+    }
+
+    // ── M1: multi-hop forward sequence ───────────────────────────────────────
+
+    #[test]
+    fn m1_multi_hop_forward_sequence() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        router
+            .path_table_mut()
+            .add_path(make_path(1, &[6001, 6002, 6003], 10))
+            .unwrap();
+
+        let cell = dummy_cell();
+        assert_eq!(router.forward_path(&cell, RouteId(1)).unwrap(), peer(6001));
+        assert_eq!(router.forward_path(&cell, RouteId(1)).unwrap(), peer(6002));
+        assert_eq!(router.forward_path(&cell, RouteId(1)).unwrap(), peer(6003));
+
+        // After all hops, the path is complete.
+        assert!(matches!(
+            router.forward_path(&cell, RouteId(1)),
+            Err(RoutingError::RouteComplete(RouteId(1)))
+        ));
+    }
+
+    // ── M2: TTL expiration ────────────────────────────────────────────────────
+
+    #[test]
+    fn m2_ttl_expiration() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        // TTL=1 — only one hop may be taken.
+        router
+            .path_table_mut()
+            .add_path(make_path(2, &[7001, 7002, 7003], 1))
+            .unwrap();
+
+        let cell = dummy_cell();
+        assert_eq!(router.forward_path(&cell, RouteId(2)).unwrap(), peer(7001));
+
+        // TTL is now 0 — all subsequent calls return RouteExpired.
+        assert!(matches!(
+            router.forward_path(&cell, RouteId(2)),
+            Err(RoutingError::RouteExpired(RouteId(2)))
+        ));
+        // State is sticky: repeated calls still return RouteExpired.
+        assert!(matches!(
+            router.forward_path(&cell, RouteId(2)),
+            Err(RoutingError::RouteExpired(RouteId(2)))
+        ));
+    }
+
+    // ── M3: route completion via max_hops ceiling ────────────────────────────
+
+    #[test]
+    fn m3_route_completion_max_hops() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        // 4 hops in the vec but max_hops capped at 2.
+        let path = RoutePath::with_max_hops(
+            RouteId(3),
+            vec![peer(8001), peer(8002), peer(8003), peer(8004)],
+            2,
+            10,
+        );
+        router.path_table_mut().add_path(path).unwrap();
+
+        let cell = dummy_cell();
+        assert_eq!(router.forward_path(&cell, RouteId(3)).unwrap(), peer(8001));
+        assert_eq!(router.forward_path(&cell, RouteId(3)).unwrap(), peer(8002));
+
+        // max_hops reached — complete even though hops remain in the vec.
+        assert!(matches!(
+            router.forward_path(&cell, RouteId(3)),
+            Err(RoutingError::RouteComplete(RouteId(3)))
+        ));
+    }
+
+    // ── M4: loop prevention ───────────────────────────────────────────────────
+
+    #[test]
+    fn m4_loop_prevention() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        // A → B → A (loop at index 2): port 9001 appears twice.
+        let path = RoutePath::new(
+            RouteId(4),
+            vec![peer(9001), peer(9002), peer(9001), peer(9003)],
+            10,
+        );
+        router.path_table_mut().add_path(path).unwrap();
+
+        let cell = dummy_cell();
+        assert_eq!(router.forward_path(&cell, RouteId(4)).unwrap(), peer(9001)); // hop 0 OK
+        assert_eq!(router.forward_path(&cell, RouteId(4)).unwrap(), peer(9002)); // hop 1 OK
+
+        // hop 2 would revisit 9001 — loop detected.
+        assert!(matches!(
+            router.forward_path(&cell, RouteId(4)),
+            Err(RoutingError::RoutingLoop(RouteId(4)))
+        ));
+        // State unchanged after RoutingLoop: hop index still at 2.
+        assert_eq!(
+            router
+                .path_table()
+                .get_path(RouteId(4))
+                .unwrap()
+                .current_hop_index,
+            2
+        );
+    }
+
+    // ── M5: forward_path on unknown route returns RouteNotFound ──────────────
+
+    #[test]
+    fn m5_unknown_path_returns_not_found() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        assert!(matches!(
+            router.forward_path(&dummy_cell(), RouteId(999)),
+            Err(RoutingError::RouteNotFound(RouteId(999)))
+        ));
+    }
+
+    // ── M6: zero-TTL path is immediately expired ─────────────────────────────
+
+    #[test]
+    fn m6_zero_ttl_immediately_expired() {
+        let mut router = MeshRouter::new(RoutingTable::new());
+        router
+            .path_table_mut()
+            .add_path(make_path(6, &[1111], 0))
+            .unwrap();
+        assert!(matches!(
+            router.forward_path(&dummy_cell(), RouteId(6)),
+            Err(RoutingError::RouteExpired(RouteId(6)))
+        ));
+    }
+
+    // ── M7: is_complete / is_expired helpers ──────────────────────────────────
+
+    #[test]
+    fn m7_path_state_helpers() {
+        let mut path = make_path(7, &[2001, 2002], 2);
+        assert!(!path.is_complete());
+        assert!(!path.is_expired());
+        assert_eq!(path.remaining_hops(), 2);
+
+        path.advance().unwrap();
+        assert_eq!(path.remaining_hops(), 1);
+
+        path.advance().unwrap();
+        assert!(path.is_complete());
+        assert!(path.is_expired()); // TTL also hits 0 after 2 advances from TTL=2
     }
 }
