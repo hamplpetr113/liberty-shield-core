@@ -34,3 +34,9 @@ pub use route_shadower::{
 pub use path_fragmenter::{
     CandidatePath, DegradationReason, FragmentPlan, PathAllocation, build_fragment_plan,
 };
+
+#[cfg(test)]
+pub mod integration_harness;
+
+#[cfg(test)]
+pub mod invariant_tests;
