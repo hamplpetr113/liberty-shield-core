@@ -3,6 +3,7 @@ pub mod path_fragmenter;
 pub mod route_shadower;
 pub mod temporal_decoupler;
 pub mod traffic_classifier;
+pub mod transmitter;
 
 pub use route_shadower::{
     ChargingState, DecisionInputs, NetworkReputation, OperatingMode, ShadowDecision, TrafficClass,
