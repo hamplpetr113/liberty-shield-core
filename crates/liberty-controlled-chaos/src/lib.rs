@@ -1,5 +1,6 @@
 pub mod cell_encoder;
 pub mod circuit_builder;
+pub mod circuit_runtime;
 pub mod correlation_score_engine;
 pub mod mesh_router;
 pub mod noise_link;
