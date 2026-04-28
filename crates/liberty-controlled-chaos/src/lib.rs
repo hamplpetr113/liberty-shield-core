@@ -1,9 +1,13 @@
+pub mod anti_correlation_scheduler;
 pub mod cell_encoder;
 pub mod circuit_builder;
+pub mod circuit_rotation;
 pub mod circuit_runtime;
 pub mod correlation_score_engine;
+pub mod cover_traffic;
 pub mod guard_selection;
 pub mod mesh_router;
+pub mod multi_circuit_distributor;
 pub mod node_discovery;
 pub mod noise_link;
 pub mod onion_layer;
