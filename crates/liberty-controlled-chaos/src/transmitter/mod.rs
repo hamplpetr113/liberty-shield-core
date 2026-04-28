@@ -10,11 +10,13 @@
 pub mod dispatcher;
 pub mod queue;
 pub mod scheduler;
+pub mod shadow_sync;
 pub mod timing;
 pub mod types;
 
 pub use dispatcher::PacketDispatcher;
 pub use scheduler::Scheduler;
+pub use shadow_sync::ShadowSyncEngine;
 pub use types::{
     Clock, FlowType, InvalidationReason, PacketPayload, PathEvent, PathQueueStats, PathStats,
     PlanInvalidationEvent, RealPacket, ScheduledPacket, SendError, ShadowSlot, TransmitterConfig,
