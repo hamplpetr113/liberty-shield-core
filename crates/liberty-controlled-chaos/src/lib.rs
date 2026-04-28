@@ -1,3 +1,4 @@
+pub mod cell_encoder;
 pub mod correlation_score_engine;
 pub mod path_fragmenter;
 pub mod route_shadower;
