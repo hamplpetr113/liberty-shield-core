@@ -101,6 +101,19 @@ impl SessionKeys {
         self.recv_key = new_recv;
         self.send_sequence = 0;
     }
+
+    /// Return `true` when the session is approaching nonce exhaustion and
+    /// should be renegotiated soon.  Triggers at 87.5 % of `MAX_SEQUENCE`
+    /// (i.e. with 12.5 % of the nonce space remaining) to leave headroom.
+    pub fn requires_rotation(&self) -> bool {
+        self.send_sequence >= (MAX_SEQUENCE / 8) * 7
+    }
+
+    /// Return the number of packets that can still be sent before
+    /// `NonceExhausted` is returned.  Returns 0 when already exhausted.
+    pub fn remaining_packets(&self) -> u64 {
+        MAX_SEQUENCE.saturating_sub(self.send_sequence)
+    }
 }
 
 /// Build a 12-byte nonce from a sequence number.
@@ -227,5 +240,39 @@ mod tests {
         let n = build_nonce(0x0102030405060708);
         assert_eq!(&n[0..4], &[0u8; 4]);
         assert_eq!(&n[4..12], &0x0102030405060708u64.to_le_bytes());
+    }
+
+    // SK11: requires_rotation is false early, true near MAX_SEQUENCE
+    #[test]
+    fn sk11_requires_rotation_threshold() {
+        let mut keys = symmetric_keys();
+        assert!(!keys.requires_rotation());
+        // Simulate a sequence just below the 87.5 % threshold.
+        let threshold = (MAX_SEQUENCE / 8) * 7;
+        keys.send_sequence = threshold - 1;
+        assert!(!keys.requires_rotation());
+        keys.send_sequence = threshold;
+        assert!(keys.requires_rotation());
+        keys.send_sequence = MAX_SEQUENCE;
+        assert!(keys.requires_rotation());
+    }
+
+    // SK12: remaining_packets counts down correctly
+    #[test]
+    fn sk12_remaining_packets() {
+        let mut keys = symmetric_keys();
+        assert_eq!(keys.remaining_packets(), MAX_SEQUENCE);
+        keys.send_sequence = MAX_SEQUENCE;
+        assert_eq!(keys.remaining_packets(), 0);
+        keys.send_sequence = MAX_SEQUENCE - 100;
+        assert_eq!(keys.remaining_packets(), 100);
+    }
+
+    // SK13: remaining_packets saturates at 0 (no underflow)
+    #[test]
+    fn sk13_remaining_saturates_at_zero() {
+        let mut keys = symmetric_keys();
+        keys.send_sequence = MAX_SEQUENCE + 1; // past limit
+        assert_eq!(keys.remaining_packets(), 0);
     }
 }

@@ -31,8 +31,13 @@ mod hkdf;
 mod poly1305;
 mod session_keys;
 mod sha256;
+mod x25519;
 
 pub use aead::{AeadError, aead_open, aead_seal};
 pub use hkdf::{derive_session_keys, hkdf, hkdf_expand, hkdf_extract};
 pub use session_keys::{MAX_SEQUENCE, SessionError, SessionKeys};
 pub use sha256::{hmac_sha256, sha256};
+pub use x25519::{
+    X25519_BASEPOINT, X25519PrivateKey, X25519PublicKey, X25519SharedSecret, clamp_scalar,
+    is_zero_shared_secret, x25519, x25519_basepoint,
+};

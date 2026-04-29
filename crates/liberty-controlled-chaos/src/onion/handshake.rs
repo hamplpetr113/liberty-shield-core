@@ -1,8 +1,4 @@
-//! Onion circuit handshake framework.
-//!
-//! Provides a simplified, HKDF-based per-hop key negotiation layer that can be
-//! upgraded to full NTor (RFC 8840) in a later sprint without changing the
-//! external interface.
+//! Onion circuit handshake framework — Sprint 37: real X25519 DH.
 //!
 //! # Protocol sketch (client-initiated)
 //!
@@ -14,22 +10,21 @@
 //!   │◄── CREATED(guard_dh_pub) ──│                             │
 //! ```
 //!
-//! The "DH" values are currently **simulated** using a fixed-size byte array
-//! derived via HKDF from a per-node shared secret.  Real X25519 DH is
-//! structurally identical and can be dropped in at the `derive_shared` call.
-//!
 //! # Key derivation
 //!
-//! `shared_secret = HKDF-SHA256(salt="liberty-shield-v1",
-//!                               ikm = initiator_secret ⊕ responder_secret,
-//!                               info = circuit_id ‖ hop_index)`
-//!
-//! Two 32-byte keys are derived from `shared_secret`:
-//! - `send_key = HKDF-expand(prk, "liberty-shield:send:<ctx>", 32)`
-//! - `recv_key = HKDF-expand(prk, "liberty-shield:recv:<ctx>", 32)`
+//! ```text
+//! resp_pub       = X25519_basepoint(responder_private)
+//! shared_secret  = X25519(initiator_private, resp_pub)
+//!               == X25519(responder_private, init_pub)
+//! context        = circuit_id(8 LE) ‖ hop_index(1)
+//! prk            = HKDF-Extract(salt="liberty-shield-v1", ikm=shared_secret)
+//! send_key       = HKDF-Expand(prk, "liberty-shield:send:<ctx>", 32)
+//! recv_key       = HKDF-Expand(prk, "liberty-shield:recv:<ctx>", 32)
+//! ```
 
-use crate::crypto::SessionKeys;
-use crate::crypto::{derive_session_keys, hkdf_extract};
+use crate::crypto::{
+    SessionKeys, derive_session_keys, hkdf_extract, is_zero_shared_secret, x25519, x25519_basepoint,
+};
 
 /// State machine for one hop in the handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,14 +44,14 @@ pub enum HandshakeError {
     InvalidState,
     /// Key material is the wrong length (must be 32 bytes).
     InvalidKeyMaterial,
-    /// The derived shared secret was all-zeros (should not happen in production).
+    /// X25519 produced an all-zero shared secret (low-order input point).
     WeakSecret,
 }
 
-/// A simulated public key for one handshake party.
-///
-/// In a full implementation this would be an X25519 public key.
-/// Here it is a 32-byte opaque value; `derive_shared` XORs the two sides.
+/// A 32-byte X25519 private key for one handshake party.
+pub type HopPrivateKey = [u8; 32];
+
+/// A 32-byte X25519 public key (u-coordinate) for one handshake party.
 pub type HopPublicKey = [u8; 32];
 
 /// Parameters for one hop during circuit construction.
@@ -66,10 +61,10 @@ pub struct HopHandshakeParams {
     pub circuit_id: u64,
     /// Position of this hop (0 = guard, 1 = first relay, 2 = exit, …).
     pub hop_index: u8,
-    /// The initiating side's "public key" (simulated).
-    pub initiator_key: HopPublicKey,
-    /// The responding side's "public key" (simulated).
-    pub responder_key: HopPublicKey,
+    /// The initiating side's X25519 private key.
+    pub initiator_private: HopPrivateKey,
+    /// The responding side's X25519 private key.
+    pub responder_private: HopPrivateKey,
 }
 
 /// Result of a completed handshake: a pair of `SessionKeys` for this hop.
@@ -81,24 +76,20 @@ pub struct HandshakeResult {
     pub responder_session: SessionKeys,
 }
 
-/// Derive `SessionKeys` for both sides of a single hop.
+/// Derive `SessionKeys` for both sides of a single hop using X25519 DH.
 ///
 /// Produces:
 /// - `initiator_session.send_key == responder_session.recv_key`
 /// - `initiator_session.recv_key == responder_session.send_key`
-///
-/// This ensures that what the initiator sends, the responder can decrypt,
-/// and vice-versa.
 pub fn complete_handshake(params: &HopHandshakeParams) -> Result<HandshakeResult, HandshakeError> {
-    // Derive a shared secret from the XOR of both public keys (placeholder DH).
-    let mut shared = [0u8; 32];
-    for (i, b) in shared.iter_mut().enumerate() {
-        *b = params.initiator_key[i] ^ params.responder_key[i];
-    }
+    // Derive both public keys from the private keys.
+    let resp_pub = x25519_basepoint(params.responder_private);
 
-    // Reject trivially-weak shared secrets (all zeros means keys were equal or
-    // both zero — this never occurs in a correct protocol).
-    if shared.iter().all(|&b| b == 0) {
+    // X25519 DH: x25519(init_priv, resp_pub) == x25519(resp_priv, init_pub).
+    let shared = x25519(params.initiator_private, resp_pub);
+
+    // Reject low-order public key inputs that produce an all-zero shared secret.
+    if is_zero_shared_secret(&shared) {
         return Err(HandshakeError::WeakSecret);
     }
 
@@ -107,28 +98,19 @@ pub fn complete_handshake(params: &HopHandshakeParams) -> Result<HandshakeResult
     context.extend_from_slice(&params.circuit_id.to_le_bytes());
     context.push(params.hop_index);
 
-    // Extract PRK
-    let salt = b"liberty-shield-v1";
-    let prk = hkdf_extract(salt, &shared);
-
-    // Derive initiator session keys (send from initiator→responder, recv from responder→initiator).
+    // Extract PRK, then derive directional session keys.
+    let prk = hkdf_extract(b"liberty-shield-v1", &shared);
     let (init_send, init_recv) = derive_session_keys(&prk, &context);
 
-    // The responder's perspective is mirrored.
-    let init_session = SessionKeys::new(init_send, init_recv);
-    let resp_session = SessionKeys::new(init_recv, init_send);
-
     Ok(HandshakeResult {
-        initiator_session: init_session,
-        responder_session: resp_session,
+        initiator_session: SessionKeys::new(init_send, init_recv),
+        responder_session: SessionKeys::new(init_recv, init_send),
     })
 }
 
-/// Build a simulated "public key" from a secret seed using HKDF.
-///
-/// In a real protocol this would be `X25519::public_key(secret)`.
-pub fn generate_public_key(secret_seed: &[u8]) -> HopPublicKey {
-    hkdf_extract(b"liberty-shield-pubkey", secret_seed)
+/// Derive the X25519 public key from a 32-byte private key.
+pub fn generate_public_key(private_key: &HopPrivateKey) -> HopPublicKey {
+    x25519_basepoint(*private_key)
 }
 
 /// Build the full per-circuit session key table for a 3+ hop circuit.
@@ -150,14 +132,13 @@ pub fn build_circuit_keys(
         .iter()
         .zip(responder_secrets.iter())
         .enumerate()
-        .map(|(idx, (isec, rsec))| {
-            let params = HopHandshakeParams {
+        .map(|(idx, (ipriv, rpriv))| {
+            complete_handshake(&HopHandshakeParams {
                 circuit_id,
                 hop_index: idx as u8,
-                initiator_key: generate_public_key(isec),
-                responder_key: generate_public_key(rsec),
-            };
-            complete_handshake(&params)
+                initiator_private: *ipriv,
+                responder_private: *rpriv,
+            })
         })
         .collect()
 }
@@ -166,21 +147,20 @@ pub fn build_circuit_keys(
 mod tests {
     use super::*;
 
-    fn params(circuit_id: u64, hop: u8, ikey: u8, rkey: u8) -> HopHandshakeParams {
+    fn params(circuit_id: u64, hop: u8, ipriv: u8, rpriv: u8) -> HopHandshakeParams {
         HopHandshakeParams {
             circuit_id,
             hop_index: hop,
-            initiator_key: [ikey; 32],
-            responder_key: [rkey; 32],
+            initiator_private: [ipriv; 32],
+            responder_private: [rpriv; 32],
         }
     }
 
-    // HS1: completed handshake produces non-zero keys
+    // HS1: completed handshake produces usable session keys
     #[test]
     fn hs1_nonzero_keys() {
         let r = complete_handshake(&params(1, 0, 0xAA, 0xBB)).unwrap();
-        assert_ne!(r.initiator_session.send_sequence(), u64::MAX);
-        // send_key is private, but we can verify via encrypt/decrypt
+        assert_eq!(r.initiator_session.send_sequence(), 0);
     }
 
     // HS2: initiator send = responder recv (verified by encrypt+decrypt)
@@ -207,13 +187,14 @@ mod tests {
         assert_eq!(&plain, b"hello from responder");
     }
 
-    // HS4: weak shared secret (same keys) returns WeakSecret
+    // HS4: same private key on both sides now succeeds (X25519 is not XOR —
+    // x25519(k, basepoint(k)) is non-zero for any valid clamped scalar).
     #[test]
-    fn hs4_weak_secret_rejected() {
-        let p = params(1, 0, 0x55, 0x55); // XOR of same = 0
-        assert_eq!(
-            complete_handshake(&p).unwrap_err(),
-            HandshakeError::WeakSecret
+    fn hs4_same_private_key_not_weak() {
+        let r = complete_handshake(&params(1, 0, 0x55, 0x55));
+        assert!(
+            r.is_ok(),
+            "same private key should not produce WeakSecret with X25519"
         );
     }
 
@@ -260,8 +241,8 @@ mod tests {
     // HS8: generate_public_key is deterministic and non-zero
     #[test]
     fn hs8_generate_public_key() {
-        let k1 = generate_public_key(b"my secret");
-        let k2 = generate_public_key(b"my secret");
+        let k1 = generate_public_key(&[0xABu8; 32]);
+        let k2 = generate_public_key(&[0xABu8; 32]);
         assert_eq!(k1, k2);
         assert_ne!(k1, [0u8; 32]);
     }
@@ -269,7 +250,7 @@ mod tests {
     // HS9: build_circuit_keys produces one result per hop
     #[test]
     fn hs9_build_circuit_keys() {
-        let init_secs: Vec<[u8; 32]> = (0u8..3).map(|i| [i; 32]).collect();
+        let init_secs: Vec<[u8; 32]> = (0u8..3).map(|i| [i + 1; 32]).collect();
         let resp_secs: Vec<[u8; 32]> = (10u8..13).map(|i| [i; 32]).collect();
         let results = build_circuit_keys(100, &init_secs, &resp_secs).unwrap();
         assert_eq!(results.len(), 3);
@@ -284,5 +265,44 @@ mod tests {
             build_circuit_keys(1, &init_secs, &resp_secs).unwrap_err(),
             HandshakeError::InvalidKeyMaterial
         );
+    }
+
+    // HS11: X25519 symmetry — both parties compute the same shared secret
+    #[test]
+    fn hs11_x25519_dh_symmetry() {
+        let init_priv = [0x1Au8; 32];
+        let resp_priv = [0x2Bu8; 32];
+        let init_pub = generate_public_key(&init_priv);
+        let resp_pub = generate_public_key(&resp_priv);
+        // Both directions of DH must agree.
+        let shared_init = x25519(init_priv, resp_pub);
+        let shared_resp = x25519(resp_priv, init_pub);
+        assert_eq!(shared_init, shared_resp);
+        assert!(!is_zero_shared_secret(&shared_init));
+    }
+
+    // HS12: 3-hop circuit keys are all unique
+    #[test]
+    fn hs12_three_hop_unique_keys() {
+        let init_secs: Vec<[u8; 32]> = (1u8..=3).map(|i| [i; 32]).collect();
+        let resp_secs: Vec<[u8; 32]> = (4u8..=6).map(|i| [i; 32]).collect();
+        let results = build_circuit_keys(42, &init_secs, &resp_secs).unwrap();
+        // Encrypt the same plaintext on each hop's session; ciphertexts must differ.
+        let cts: Vec<_> = results
+            .into_iter()
+            .map(|mut r| r.initiator_session.encrypt_packet(b"", b"probe").unwrap())
+            .collect();
+        assert_ne!(cts[0], cts[1]);
+        assert_ne!(cts[1], cts[2]);
+        assert_ne!(cts[0], cts[2]);
+    }
+
+    // HS13: is_zero_shared_secret detects all-zero output
+    #[test]
+    fn hs13_zero_shared_secret_detection() {
+        let zero = [0u8; 32];
+        let nonzero = [1u8; 32];
+        assert!(is_zero_shared_secret(&zero));
+        assert!(!is_zero_shared_secret(&nonzero));
     }
 }
