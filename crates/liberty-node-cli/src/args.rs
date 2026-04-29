@@ -88,6 +88,17 @@ pub enum Command {
         seed: u64,
         count: usize,
     },
+    OnionCircuitBuild {
+        nodes: usize,
+    },
+    OnionSend {
+        nodes: usize,
+        payload: String,
+    },
+    OnionSimulate {
+        nodes: usize,
+        rounds: usize,
+    },
     Run {
         node_count: usize,
         circuits: usize,
@@ -274,6 +285,23 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 count: extract_usize(&args[1..], "--count").unwrap_or(5),
             },
         }),
+        "onion-circuit-build" => Ok(CliArgs {
+            command: Command::OnionCircuitBuild {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(5),
+            },
+        }),
+        "onion-send" => Ok(CliArgs {
+            command: Command::OnionSend {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(5),
+                payload: extract_string(&args[1..], "--payload").unwrap_or_else(|| "hello".to_string()),
+            },
+        }),
+        "onion-simulate" => Ok(CliArgs {
+            command: Command::OnionSimulate {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(5),
+                rounds: extract_usize(&args[1..], "--rounds").unwrap_or(10),
+            },
+        }),
         "run" => Ok(CliArgs {
             command: Command::Run {
                 node_count: extract_usize(&args[1..], "--node-count").unwrap_or(100),
@@ -294,11 +322,11 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             },
         }),
         "" => Err(
-            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|run|topology|bench>"
+            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|onion-circuit-build|onion-send|onion-simulate|run|topology|bench>"
                 .to_string(),
         ),
         other => Err(format!(
-            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|run|topology|bench>"
+            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|onion-circuit-build|onion-send|onion-simulate|run|topology|bench>"
         )),
     }
 }

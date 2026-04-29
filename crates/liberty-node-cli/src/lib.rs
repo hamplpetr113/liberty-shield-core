@@ -1,4 +1,5 @@
 pub mod args;
+pub mod circuit_builder;
 pub mod cluster_manager;
 pub mod cluster_metrics;
 pub mod cluster_packet_flow;
@@ -16,6 +17,7 @@ pub mod encrypted_udp_node;
 pub mod encrypted_udp_packet;
 pub mod encrypted_udp_socket;
 pub mod encrypted_udp_types;
+pub mod guard_selection;
 pub mod handshake_manager;
 pub mod handshake_message;
 pub mod handshake_state;
@@ -23,6 +25,9 @@ pub mod handshake_types;
 pub mod identity;
 pub mod node_runtime;
 pub mod node_service;
+pub mod onion_crypto;
+pub mod onion_packet;
+pub mod onion_router;
 pub mod output;
 pub mod peer_directory;
 pub mod peer_table;
@@ -34,6 +39,7 @@ pub mod udp_testnet_packet;
 pub mod udp_testnet_types;
 
 use args::{Command, parse_args};
+use circuit_builder::CircuitBuilder;
 use cluster_manager::LocalCluster;
 use cluster_topology::{build_cluster_configs, parse_profile};
 use config::NodeConfig;
@@ -44,15 +50,17 @@ use encrypted_udp_cluster::EncryptedUdpCluster;
 use encrypted_udp_types::EncryptedUdpNodeId;
 use node_runtime::NodeRuntime;
 use node_service::NodeService;
+use onion_router::OnionRouter;
 use output::{
     bench_json, circuit_run_json, circuit_status_json, cluster_bench_json, cluster_error_json,
     cluster_peers_json, cluster_run_json, cluster_start_json, cluster_status_json,
     cluster_topology_json, cover_traffic_run_json, directory_status_json, encrypted_udp_bench_json,
     encrypted_udp_error_json, encrypted_udp_probe_json, encrypted_udp_send_json,
     encrypted_udp_start_json, encrypted_udp_status_json, handshake_error_json, handshake_ring_json,
-    metrics_json, peers_json, service_error_json, start_json, status_json, topology_json,
-    udp_testnet_bench_json, udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json,
-    udp_testnet_start_json, udp_testnet_status_json,
+    metrics_json, onion_circuit_build_json, onion_error_json, onion_send_json, onion_simulate_json,
+    peers_json, service_error_json, start_json, status_json, topology_json, udp_testnet_bench_json,
+    udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json, udp_testnet_start_json,
+    udp_testnet_status_json,
 };
 use peer_directory::{PeerDescriptor, PeerDirectory, PeerRole};
 use udp_testnet_cluster::UdpTestnetCluster;
@@ -495,6 +503,88 @@ fn execute(cmd: Command) -> String {
             }
             cover_traffic_run_json(node_id, seed, count, ENCRYPTED_CELL_SIZE, all_correct)
                 .to_string()
+        }
+
+        // ── Onion routing commands ────────────────────────────────────────────
+        Command::OnionCircuitBuild { nodes } => {
+            if nodes < 3 {
+                return onion_error_json("nodes must be >= 3").to_string();
+            }
+            let peers: Vec<_> = (1..=nodes as u64)
+                .map(|id| PeerDescriptor::deterministic(id, 45000))
+                .collect();
+            match CircuitBuilder::build_circuit(&peers) {
+                Ok(circuit) => onion_circuit_build_json(nodes, circuit.hop_count()).to_string(),
+                Err(e) => onion_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::OnionSend { nodes, payload } => {
+            if nodes < 3 {
+                return onion_error_json("nodes must be >= 3").to_string();
+            }
+            let peers: Vec<_> = (1..=nodes as u64)
+                .map(|id| PeerDescriptor::deterministic(id, 45000))
+                .collect();
+            let circuit = match CircuitBuilder::build_circuit(&peers) {
+                Ok(c) => c,
+                Err(e) => return onion_error_json(&format!("{e:?}")).to_string(),
+            };
+            let hop_ids: Vec<u64> = circuit.hops.iter().map(|id| id.0).collect();
+            let hops = hop_ids.len();
+            let mut router = OnionRouter::new();
+            if let Err(e) = router.register_circuit(1, hop_ids) {
+                return onion_error_json(&format!("{e:?}")).to_string();
+            }
+            let pkt = match router.build_packet(1, payload.as_bytes()) {
+                Ok(p) => p,
+                Err(e) => return onion_error_json(&format!("{e:?}")).to_string(),
+            };
+            let mut current = pkt;
+            let delivered = loop {
+                match router.process_packet(current) {
+                    Ok(onion_router::ProcessResult::Forward(next)) => current = next,
+                    Ok(onion_router::ProcessResult::Delivered(_)) => break true,
+                    Err(e) => return onion_error_json(&format!("{e:?}")).to_string(),
+                }
+            };
+            onion_send_json(nodes, payload.len(), hops, delivered).to_string()
+        }
+        Command::OnionSimulate { nodes, rounds } => {
+            if nodes < 3 {
+                return onion_error_json("nodes must be >= 3").to_string();
+            }
+            let peers: Vec<_> = (1..=nodes as u64)
+                .map(|id| PeerDescriptor::deterministic(id, 45000))
+                .collect();
+            let circuit = match CircuitBuilder::build_circuit(&peers) {
+                Ok(c) => c,
+                Err(e) => return onion_error_json(&format!("{e:?}")).to_string(),
+            };
+            let hop_ids: Vec<u64> = circuit.hops.iter().map(|id| id.0).collect();
+            let mut router = OnionRouter::new();
+            if let Err(e) = router.register_circuit(1, hop_ids) {
+                return onion_error_json(&format!("{e:?}")).to_string();
+            }
+            let mut delivered_count = 0usize;
+            for r in 0..rounds {
+                let payload = format!("round-{r}");
+                let pkt = match router.build_packet(1, payload.as_bytes()) {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                let mut current = pkt;
+                loop {
+                    match router.process_packet(current) {
+                        Ok(onion_router::ProcessResult::Forward(next)) => current = next,
+                        Ok(onion_router::ProcessResult::Delivered(_)) => {
+                            delivered_count += 1;
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            onion_simulate_json(nodes, rounds, delivered_count).to_string()
         }
 
         // ── Simulation commands ───────────────────────────────────────────────
@@ -1970,6 +2060,120 @@ mod tests {
             assert!(
                 !out.contains("0.0.0.0"),
                 "command `{cmd}` must not output public address; got: {out}"
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 24 — Onion routing CLI integration tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // OR-CLI1: onion-circuit-build returns built JSON with correct field names
+    #[test]
+    fn or_cli1_onion_circuit_build_json() {
+        let out = run_cli(&args("onion-circuit-build --nodes 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "onion-circuit-build");
+        assert_eq!(v["nodes"], 5);
+        assert_eq!(v["status"], "built");
+        assert_eq!(v["hops"], 3);
+    }
+
+    // OR-CLI2: onion-circuit-build < 3 nodes returns error
+    #[test]
+    fn or_cli2_onion_circuit_build_too_few_nodes_error() {
+        let out = run_cli(&args("onion-circuit-build --nodes 2"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // OR-CLI3: onion-send delivers payload and returns valid JSON
+    #[test]
+    fn or_cli3_onion_send_delivers_payload() {
+        let out = run_cli(&args("onion-send --nodes 5 --payload testpayload"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "onion-send");
+        assert_eq!(v["nodes"], 5);
+        assert_eq!(v["delivered"], true);
+        assert_eq!(v["payload_len"], 11);
+        assert_eq!(v["hops"], 3);
+    }
+
+    // OR-CLI4: onion-send < 3 nodes returns error
+    #[test]
+    fn or_cli4_onion_send_too_few_nodes_error() {
+        let out = run_cli(&args("onion-send --nodes 2 --payload hello"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // OR-CLI5: onion-simulate completes all rounds and delivers them
+    #[test]
+    fn or_cli5_onion_simulate_delivers_all_rounds() {
+        let out = run_cli(&args("onion-simulate --nodes 5 --rounds 10"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "onion-simulate");
+        assert_eq!(v["nodes"], 5);
+        assert_eq!(v["rounds"], 10);
+        assert_eq!(v["delivered"], 10);
+    }
+
+    // OR-CLI6: onion-simulate < 3 nodes returns error
+    #[test]
+    fn or_cli6_onion_simulate_too_few_nodes_error() {
+        let out = run_cli(&args("onion-simulate --nodes 1 --rounds 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // OR-CLI7: all three onion commands produce valid JSON
+    #[test]
+    fn or_cli7_all_onion_commands_valid_json() {
+        let cmds = [
+            "onion-circuit-build --nodes 5",
+            "onion-send --nodes 5 --payload hello",
+            "onion-simulate --nodes 5 --rounds 3",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            let parsed = serde_json::from_str::<serde_json::Value>(&out);
+            assert!(parsed.is_ok(), "JSON parse failed for `{cmd}`: {out}");
+        }
+    }
+
+    // OR-CLI8: onion-circuit-build is deterministic (same nodes → same hops)
+    #[test]
+    fn or_cli8_onion_circuit_build_deterministic() {
+        let out1 = run_cli(&args("onion-circuit-build --nodes 5"));
+        let out2 = run_cli(&args("onion-circuit-build --nodes 5"));
+        let v1: serde_json::Value = serde_json::from_str(&out1).unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&out2).unwrap();
+        assert_eq!(v1["hops"], v2["hops"]);
+        assert_eq!(v1["status"], v2["status"]);
+    }
+
+    // OR-CLI9: legacy Sprint 19-23 commands unaffected by onion additions
+    #[test]
+    fn or_cli9_legacy_commands_unaffected() {
+        let out = run_cli(&args("circuit-run --nodes 3 --rounds 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "circuit-run");
+        assert_eq!(v["rounds"], 5);
+    }
+
+    // OR-SEC1: onion commands never produce "0.0.0.0" in output
+    #[test]
+    fn or_sec1_onion_commands_no_public_address() {
+        let cmds = [
+            "onion-circuit-build --nodes 5",
+            "onion-send --nodes 5 --payload hello",
+            "onion-simulate --nodes 5 --rounds 3",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            assert!(
+                !out.contains("0.0.0.0"),
+                "onion command `{cmd}` must not output 0.0.0.0: {out}"
             );
         }
     }

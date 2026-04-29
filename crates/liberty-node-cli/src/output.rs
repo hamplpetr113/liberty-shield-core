@@ -473,3 +473,37 @@ pub fn cover_traffic_run_json(
 pub fn handshake_error_json(msg: &str) -> Value {
     json!({ "error": msg })
 }
+
+// ── Onion routing outputs ─────────────────────────────────────────────────────
+
+pub fn onion_circuit_build_json(nodes: usize, hops: usize) -> Value {
+    json!({
+        "command": "onion-circuit-build",
+        "nodes": nodes,
+        "hops": hops,
+        "status": "built"
+    })
+}
+
+pub fn onion_send_json(nodes: usize, payload_len: usize, hops: usize, delivered: bool) -> Value {
+    json!({
+        "command": "onion-send",
+        "nodes": nodes,
+        "payload_len": payload_len,
+        "hops": hops,
+        "delivered": delivered
+    })
+}
+
+pub fn onion_simulate_json(nodes: usize, rounds: usize, delivered: usize) -> Value {
+    json!({
+        "command": "onion-simulate",
+        "nodes": nodes,
+        "rounds": rounds,
+        "delivered": delivered
+    })
+}
+
+pub fn onion_error_json(msg: &str) -> Value {
+    json!({ "error": msg })
+}
