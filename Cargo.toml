@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/liberty-controlled-chaos",
+    "crates/liberty-node-cli",
 ]
 resolver = "2"
 

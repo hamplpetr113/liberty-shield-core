@@ -288,6 +288,14 @@ name = "liberty-controlled-chaos"
 version = "0.1.0"
 
 [[package]]
+name = "liberty-node-cli"
+version = "0.1.0"
+dependencies = [
+ "liberty-controlled-chaos",
+ "serde_json",
+]
+
+[[package]]
 name = "liberty-shield"
 version = "0.1.0"
 dependencies = [
