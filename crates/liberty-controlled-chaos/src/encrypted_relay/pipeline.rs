@@ -355,7 +355,10 @@ mod tests {
         let cid = id.circuit_id;
         let send = SessionKeys::new([0x33u8; 32], [0x33u8; 32]);
         let recv = SessionKeys::new([0x33u8; 32], [0x33u8; 32]);
-        assert!(p.register_circuit_with_identity(cid, send, recv, id).is_ok());
+        assert!(
+            p.register_circuit_with_identity(cid, send, recv, id)
+                .is_ok()
+        );
         assert!(p.circuit_identity(cid).is_some());
     }
 
@@ -367,12 +370,16 @@ mod tests {
         let cid = id1.circuit_id;
         let send1 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
         let recv1 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
-        p.register_circuit_with_identity(cid, send1, recv1, id1).unwrap();
+        p.register_circuit_with_identity(cid, send1, recv1, id1)
+            .unwrap();
 
         // Second registration with the same circuit_id must fail.
         let id2 = CircuitIdentity::generate(&[0xCCu8; 32], &[0xDDu8; 32], 2);
         // Forge a duplicate circuit_id so the id-collision branch fires.
-        let id2_dup = CircuitIdentity { circuit_id: cid, circuit_hash: id2.circuit_hash };
+        let id2_dup = CircuitIdentity {
+            circuit_id: cid,
+            circuit_hash: id2.circuit_hash,
+        };
         let send2 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
         let recv2 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
         assert_eq!(
@@ -390,10 +397,14 @@ mod tests {
         let cid1 = id1.circuit_id;
         let send1 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
         let recv1 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
-        p.register_circuit_with_identity(cid1, send1, recv1, id1).unwrap();
+        p.register_circuit_with_identity(cid1, send1, recv1, id1)
+            .unwrap();
 
         // Different circuit_id but same hash (forced collision).
-        let id2 = CircuitIdentity { circuit_id: cid1.wrapping_add(1), circuit_hash: hash };
+        let id2 = CircuitIdentity {
+            circuit_id: cid1.wrapping_add(1),
+            circuit_hash: hash,
+        };
         let send2 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
         let recv2 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
         assert_eq!(
@@ -412,7 +423,8 @@ mod tests {
 
         let send = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
         let recv = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
-        p.register_circuit_with_identity(cid, send, recv, id).unwrap();
+        p.register_circuit_with_identity(cid, send, recv, id)
+            .unwrap();
 
         p.remove_circuit(cid);
         assert!(p.circuit_identity(cid).is_none());
@@ -422,7 +434,10 @@ mod tests {
         let id2 = CircuitIdentity::generate(&[0x11u8; 32], &[0x22u8; 32], 5);
         let send2 = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
         let recv2 = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
-        assert!(p.register_circuit_with_identity(cid, send2, recv2, id2).is_ok());
+        assert!(
+            p.register_circuit_with_identity(cid, send2, recv2, id2)
+                .is_ok()
+        );
     }
 
     // RP12: pipeline can send/receive after register_circuit_with_identity.
@@ -439,14 +454,22 @@ mod tests {
         // Simpler: just use circuit 1 as in other tests but register with identity.
         let id = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 0);
         let pt = RelayCellPlaintext::new(
-            id.circuit_id, 2, RelayCellCommand::Data, 0, b"hello".to_vec()
+            id.circuit_id,
+            2,
+            RelayCellCommand::Data,
+            0,
+            b"hello".to_vec(),
         );
         let cid = id.circuit_id;
         let send = SessionKeys::new([0x77u8; 32], [0x77u8; 32]);
         let recv = SessionKeys::new([0x77u8; 32], [0x77u8; 32]);
-        p.register_circuit_with_identity(cid, send, recv, id).unwrap();
+        p.register_circuit_with_identity(cid, send, recv, id)
+            .unwrap();
 
         let enc = p.send_cell(cid, 2, pt.clone()).unwrap();
-        assert!(matches!(p.receive_cell(cid, 2, &enc), PipelineResult::Accepted(_)));
+        assert!(matches!(
+            p.receive_cell(cid, 2, &enc),
+            PipelineResult::Accepted(_)
+        ));
     }
 }

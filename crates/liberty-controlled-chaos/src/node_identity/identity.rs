@@ -89,7 +89,11 @@ impl NodeIdentity {
         let public_key = kp.public;
         let private_key = seed; // seed is the private scalar (clamping applied on use)
         let node_id = sha256(&public_key);
-        Self { node_id, private_key, public_key }
+        Self {
+            node_id,
+            private_key,
+            public_key,
+        }
     }
 
     /// Generate a fresh `NodeIdentity` using a time + PID seed.
@@ -228,7 +232,10 @@ mod tests {
     #[test]
     fn ni7_from_json_rejects_malformed() {
         assert_eq!(NodeIdentity::from_json("{}"), Err(IdentityError::BadJson));
-        assert_eq!(NodeIdentity::from_json("not json"), Err(IdentityError::BadJson));
+        assert_eq!(
+            NodeIdentity::from_json("not json"),
+            Err(IdentityError::BadJson)
+        );
         assert_eq!(
             NodeIdentity::from_json("{\"node_id\":\"gg\"}"),
             Err(IdentityError::BadJson) // missing private_key + public_key

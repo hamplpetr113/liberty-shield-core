@@ -59,9 +59,11 @@ impl CircuitIdentity {
         input[32..64].copy_from_slice(peer_node_id);
         input[64..72].copy_from_slice(&nonce.to_le_bytes());
         let circuit_hash = sha256(&input);
-        let circuit_id =
-            u64::from_le_bytes(circuit_hash[0..8].try_into().unwrap());
-        Self { circuit_id, circuit_hash }
+        let circuit_id = u64::from_le_bytes(circuit_hash[0..8].try_into().unwrap());
+        Self {
+            circuit_id,
+            circuit_hash,
+        }
     }
 }
 
@@ -102,8 +104,7 @@ mod tests {
     #[test]
     fn ci2_circuit_id_from_hash() {
         let id = CircuitIdentity::generate(&node_a(), &node_b(), 1);
-        let expected_id =
-            u64::from_le_bytes(id.circuit_hash[0..8].try_into().unwrap());
+        let expected_id = u64::from_le_bytes(id.circuit_hash[0..8].try_into().unwrap());
         assert_eq!(id.circuit_id, expected_id);
     }
 

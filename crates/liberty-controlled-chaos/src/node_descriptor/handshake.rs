@@ -142,7 +142,9 @@ mod tests {
     use std::net::SocketAddr;
 
     use super::*;
-    use crate::encrypted_relay::{PipelineResult, RelayCellCommand, RelayCellPlaintext, RelayPipeline};
+    use crate::encrypted_relay::{
+        PipelineResult, RelayCellCommand, RelayCellPlaintext, RelayPipeline,
+    };
     use crate::node_identity::NodeIdentity;
 
     fn addr(port: u16) -> SocketAddr {
@@ -176,9 +178,7 @@ mod tests {
         let r2 = perform_handshake(&a, addr(7003), &b, addr(7004), 99).unwrap();
         // Both calls produce the same keys — confirm by building pipelines and
         // cross-decrypting.
-        let id = crate::circuit_identity::CircuitIdentity::generate(
-            &a.node_id, &b.node_id, 99
-        );
+        let id = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 99);
         let cid = id.circuit_id;
 
         let (a_send1, a_recv1) = r1.initiator_keys;
@@ -227,7 +227,8 @@ mod tests {
         let mut p_b = RelayPipeline::new();
         p_b.register_circuit(cid1, SessionKeys::new([0u8; 32], [0u8; 32]), b_recv2);
 
-        let pt = RelayCellPlaintext::new(cid1, 1, RelayCellCommand::Data, 0, b"nonce-test".to_vec());
+        let pt =
+            RelayCellPlaintext::new(cid1, 1, RelayCellCommand::Data, 0, b"nonce-test".to_vec());
         let enc = p_a.send_cell(cid1, 1, pt).unwrap();
         // Decryption with the wrong nonce's keys must fail.
         assert!(matches!(
@@ -243,7 +244,8 @@ mod tests {
         let a = make_id(0x55);
         let b = make_id(0x66);
         let r = perform_handshake(&a, addr(7010), &b, addr(7011), 5).unwrap();
-        let cid = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 5).circuit_id;
+        let cid = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 5)
+            .circuit_id;
 
         let (a_send, a_recv) = r.initiator_keys;
         let (b_send, b_recv) = r.responder_keys;
@@ -272,11 +274,13 @@ mod tests {
 
         // A-B leg.
         let r_ab = perform_handshake(&a, addr(7020), &b, addr(7021), 10).unwrap();
-        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 10).circuit_id;
+        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 10)
+            .circuit_id;
 
         // B-C leg.
         let r_bc = perform_handshake(&b, addr(7021), &c, addr(7022), 20).unwrap();
-        let cid_bc = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, 20).circuit_id;
+        let cid_bc = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, 20)
+            .circuit_id;
 
         let (a_send_ab, a_recv_ab) = r_ab.initiator_keys;
         let (b_send_ab, b_recv_ab) = r_ab.responder_keys;
@@ -306,7 +310,11 @@ mod tests {
 
         // B re-sends the same payload on the B-C circuit.
         let pt_b = RelayCellPlaintext::new(
-            cid_bc, 1, RelayCellCommand::Data, 0, plaintext_at_b.payload.clone()
+            cid_bc,
+            1,
+            RelayCellCommand::Data,
+            0,
+            plaintext_at_b.payload.clone(),
         );
         let enc_bc = p_b.send_cell(cid_bc, 1, pt_b.clone()).unwrap();
 
@@ -344,7 +352,8 @@ mod tests {
         let a = make_id(0x10);
         let b = make_id(0x20);
         let r = perform_handshake(&a, addr(7050), &b, addr(7051), 7).unwrap();
-        let cid = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 7).circuit_id;
+        let cid = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 7)
+            .circuit_id;
 
         let (a_send, a_recv) = r.initiator_keys;
         let (b_send, b_recv) = r.responder_keys;
@@ -356,26 +365,36 @@ mod tests {
         p_b.register_circuit(cid, b_send, b_recv);
 
         // A → B
-        let pt_ab = RelayCellPlaintext::new(cid, 1, RelayCellCommand::Data, 0, b"A says hi".to_vec());
+        let pt_ab =
+            RelayCellPlaintext::new(cid, 1, RelayCellCommand::Data, 0, b"A says hi".to_vec());
         let enc = p_a.send_cell(cid, 1, pt_ab.clone()).unwrap();
-        assert!(matches!(p_b.receive_cell(cid, 1, &enc), PipelineResult::Accepted(_)));
+        assert!(matches!(
+            p_b.receive_cell(cid, 1, &enc),
+            PipelineResult::Accepted(_)
+        ));
 
         // B → A
-        let pt_ba = RelayCellPlaintext::new(cid, 2, RelayCellCommand::Data, 0, b"B replies".to_vec());
+        let pt_ba =
+            RelayCellPlaintext::new(cid, 2, RelayCellCommand::Data, 0, b"B replies".to_vec());
         let enc2 = p_b.send_cell(cid, 2, pt_ba.clone()).unwrap();
-        assert!(matches!(p_a.receive_cell(cid, 2, &enc2), PipelineResult::Accepted(_)));
+        assert!(matches!(
+            p_a.receive_cell(cid, 2, &enc2),
+            PipelineResult::Accepted(_)
+        ));
     }
 
     // MN17: PeerTable::peers() iterator visits all peers.
     #[test]
     fn mn17_peer_table_iterator() {
         let mut table = crate::node_descriptor::PeerTable::new();
-        let ids: Vec<_> = (1u8..=4).map(|i| {
-            let d = NodeDescriptor::new([i; 32], addr(8100 + i as u16));
-            let nid = d.node_id;
-            table.add_peer(d);
-            nid
-        }).collect();
+        let ids: Vec<_> = (1u8..=4)
+            .map(|i| {
+                let d = NodeDescriptor::new([i; 32], addr(8100 + i as u16));
+                let nid = d.node_id;
+                table.add_peer(d);
+                nid
+            })
+            .collect();
         let found: std::collections::HashSet<_> = table.peers().map(|d| d.node_id).collect();
         for id in &ids {
             assert!(found.contains(id));
@@ -393,8 +412,10 @@ mod tests {
         // A-C
         let r_ac = perform_handshake(&a, addr(7060), &c, addr(7062), 1).unwrap();
 
-        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 1).circuit_id;
-        let cid_ac = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &c.node_id, 1).circuit_id;
+        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 1)
+            .circuit_id;
+        let cid_ac = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &c.node_id, 1)
+            .circuit_id;
 
         let mut p_a_to_b = RelayPipeline::new();
         let (a_send_ab, _) = r_ab.initiator_keys;
@@ -406,7 +427,8 @@ mod tests {
         let (_, c_recv) = r_ac.responder_keys;
         p_wrong.register_circuit(cid_ab, SessionKeys::new([0u8; 32], [0u8; 32]), c_recv);
 
-        let pt = RelayCellPlaintext::new(cid_ab, 1, RelayCellCommand::Data, 0, b"peer-diff".to_vec());
+        let pt =
+            RelayCellPlaintext::new(cid_ab, 1, RelayCellCommand::Data, 0, b"peer-diff".to_vec());
         let enc = p_a_to_b.send_cell(cid_ab, 1, pt).unwrap();
         assert!(matches!(
             p_wrong.receive_cell(cid_ab, 1, &enc),
@@ -438,8 +460,10 @@ mod tests {
 
         let r_ab = perform_handshake(&a, addr(7070), &b, addr(7071), 30).unwrap();
         let r_bc = perform_handshake(&b, addr(7071), &c, addr(7072), 31).unwrap();
-        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 30).circuit_id;
-        let cid_bc = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, 31).circuit_id;
+        let cid_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, 30)
+            .circuit_id;
+        let cid_bc = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, 31)
+            .circuit_id;
 
         let (a_send, a_recv) = r_ab.initiator_keys;
         let (b_recv_send, b_recv_recv) = r_ab.responder_keys;
@@ -456,13 +480,20 @@ mod tests {
 
         for seq in 0u64..5 {
             let payload = format!("msg-{seq}").into_bytes();
-            let pt = RelayCellPlaintext::new(cid_ab, 1, RelayCellCommand::Data, seq, payload.clone());
+            let pt =
+                RelayCellPlaintext::new(cid_ab, 1, RelayCellCommand::Data, seq, payload.clone());
             let enc = p_a.send_cell(cid_ab, 1, pt.clone()).unwrap();
             let dec_b = match p_b.receive_cell(cid_ab, 1, &enc) {
                 PipelineResult::Accepted(d) => d,
                 other => panic!("B failed at seq {seq}: {other:?}"),
             };
-            let pt_bc = RelayCellPlaintext::new(cid_bc, 1, RelayCellCommand::Data, seq, dec_b.payload.clone());
+            let pt_bc = RelayCellPlaintext::new(
+                cid_bc,
+                1,
+                RelayCellCommand::Data,
+                seq,
+                dec_b.payload.clone(),
+            );
             let enc_bc = p_b.send_cell(cid_bc, 1, pt_bc).unwrap();
             match p_c.receive_cell(cid_bc, 1, &enc_bc) {
                 PipelineResult::Accepted(dec) => assert_eq!(dec.payload, payload),
@@ -483,10 +514,14 @@ mod tests {
         let r_ab = perform_handshake(&a, addr(7040), &b, addr(7041), nonce_ab).unwrap();
         let r_bc = perform_handshake(&b, addr(7041), &c, addr(7042), nonce_bc).unwrap();
 
-        let id_ab = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, nonce_ab);
-        let id_ba = crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, nonce_ab);
-        let id_bc = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, nonce_bc);
-        let id_cb = crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, nonce_bc);
+        let id_ab =
+            crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, nonce_ab);
+        let id_ba =
+            crate::circuit_identity::CircuitIdentity::generate(&a.node_id, &b.node_id, nonce_ab);
+        let id_bc =
+            crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, nonce_bc);
+        let id_cb =
+            crate::circuit_identity::CircuitIdentity::generate(&b.node_id, &c.node_id, nonce_bc);
         let cid_ab = id_ab.circuit_id;
         let cid_bc = id_bc.circuit_id;
 
@@ -496,14 +531,18 @@ mod tests {
         let (c_send, c_recv) = r_bc.responder_keys;
 
         let mut p_a = RelayPipeline::new();
-        p_a.register_circuit_with_identity(cid_ab, a_send, a_recv, id_ab).unwrap();
+        p_a.register_circuit_with_identity(cid_ab, a_send, a_recv, id_ab)
+            .unwrap();
 
         let mut p_b = RelayPipeline::new();
-        p_b.register_circuit_with_identity(cid_ab, b_recv_send, b_recv_recv, id_ba).unwrap();
-        p_b.register_circuit_with_identity(cid_bc, b_send_send, b_send_recv, id_bc).unwrap();
+        p_b.register_circuit_with_identity(cid_ab, b_recv_send, b_recv_recv, id_ba)
+            .unwrap();
+        p_b.register_circuit_with_identity(cid_bc, b_send_send, b_send_recv, id_bc)
+            .unwrap();
 
         let mut p_c = RelayPipeline::new();
-        p_c.register_circuit_with_identity(cid_bc, c_send, c_recv, id_cb).unwrap();
+        p_c.register_circuit_with_identity(cid_bc, c_send, c_recv, id_cb)
+            .unwrap();
 
         let payload = b"end-to-end".to_vec();
         let pt = RelayCellPlaintext::new(cid_ab, 1, RelayCellCommand::Data, 0, payload.clone());
@@ -514,7 +553,13 @@ mod tests {
             other => panic!("B failed: {other:?}"),
         };
 
-        let pt_bc = RelayCellPlaintext::new(cid_bc, 1, RelayCellCommand::Data, 0, dec_at_b.payload.clone());
+        let pt_bc = RelayCellPlaintext::new(
+            cid_bc,
+            1,
+            RelayCellCommand::Data,
+            0,
+            dec_at_b.payload.clone(),
+        );
         let enc_bc = p_b.send_cell(cid_bc, 1, pt_bc).unwrap();
 
         match p_c.receive_cell(cid_bc, 1, &enc_bc) {

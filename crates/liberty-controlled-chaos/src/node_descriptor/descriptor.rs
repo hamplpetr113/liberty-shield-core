@@ -25,7 +25,11 @@ impl NodeDescriptor {
     /// `node_id` is computed as `SHA-256(public_key)`.
     pub fn new(public_key: [u8; 32], address: SocketAddr) -> Self {
         let node_id = sha256(&public_key);
-        Self { node_id, public_key, address }
+        Self {
+            node_id,
+            public_key,
+            address,
+        }
     }
 
     /// Return `true` if `node_id == SHA-256(public_key)`.

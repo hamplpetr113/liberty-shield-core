@@ -12,7 +12,9 @@ pub struct PeerTable {
 
 impl PeerTable {
     pub fn new() -> Self {
-        Self { peers: HashMap::new() }
+        Self {
+            peers: HashMap::new(),
+        }
     }
 
     /// Insert or update a peer.  If a peer with the same `node_id` already
