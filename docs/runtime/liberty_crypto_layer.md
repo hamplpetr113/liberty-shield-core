@@ -280,9 +280,29 @@ responder_session = SessionKeys::new(init_recv, init_send)
 - All crypto is **NON-PRODUCTION**: intended for architectural validation, not deployment.
 - No constant-time guarantees beyond `ct_eq_16` for tag comparison.
 - No side-channel mitigations in SHA-256 or ChaCha20 implementation.
-- Placeholder DH (XOR) provides no security; replace with X25519 before production.
-- Nonce space: 2^48 packets per session (`MAX_SEQUENCE`); rotate keys well before exhaustion.
-- AEAD key rotation on nonce exhaustion is not yet implemented.
+- Nonce space: 2^48 packets per session (`MAX_SEQUENCE`); `requires_rotation()` fires at 87.5 %.
+- `decrypt_packet_in_order` enforces strictly-increasing sequences; the basic `decrypt_packet`
+  does not track order — pair it with `ReplayDetector` for sliding-window protection.
+- `RekeyGuard` nonce set is in-memory only; persisted storage is required for production.
+
+---
+
+## Sprint 37 — X25519 Key Exchange
+
+Replaced XOR placeholder DH with RFC 7748 X25519.  See
+`docs/runtime/x25519_key_exchange_sprint37.md` for full details.
+
+---
+
+## Sprint 38 — Session Rekey Protocol
+
+Added session renegotiation and crypto hardening.  See
+`docs/runtime/sprint38_rekey_protocol.md` for full details.
+
+New modules: `onion/rekey.rs`, `EphemeralKeypair` in `crypto/x25519.rs`.
+
+New `SessionKeys` API: `rotate_keys`, `decrypt_packet_in_order`,
+`SessionError::ReplayDetected`.
 
 ---
 
@@ -295,11 +315,13 @@ responder_session = SessionKeys::new(init_recv, init_send)
 | `crypto/poly1305` | 6 (PL1–PL6) |
 | `crypto/aead` | 10 (AE1–AE10) |
 | `crypto/hkdf` | 7 (HK1–HK7) |
-| `crypto/session_keys` | 10 (SK1–SK10) |
+| `crypto/session_keys` | 19 (SK1–SK16, AE1–AE3) |
 | `proto/cell_frame` | 11 (CF1–CF11) |
 | `replay_protection` (extended) | 12 (RW7–RW18) |
 | `encrypted_relay/cell` | 10 (ER1–ER10) |
 | `encrypted_relay/pipeline` | 6 (RP1–RP6) |
-| `onion/handshake` | 10 (HS1–HS10) |
+| `onion/handshake` | 13 (HS1–HS13) |
+| `onion/rekey` | 4 (RK1–RK4) |
+| `crypto/x25519` (ephemeral) | 3 (FS1–FS3) |
 | `mesh_simulator` (large-scale) | 15 (LS1–LS15) |
-| **Total (Sprint 31-36)** | **110** |
+| **Total (Sprint 31-38)** | **129** |

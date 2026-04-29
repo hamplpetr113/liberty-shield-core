@@ -1,10 +1,10 @@
 //! Onion circuit construction and key negotiation.
 //!
-//! Currently provides a simplified HKDF-based handshake framework.
-//! Designed to be upgraded to NTor (X25519 + BLAKE2s) in a future sprint
-//! without changing the external interface.
+//! Provides an X25519-based per-hop handshake and a session rekey protocol
+//! for long-running circuits.
 
 pub mod handshake;
+pub mod rekey;
 
 pub use handshake::{
     HandshakeError, HandshakeResult, HandshakeState, HopHandshakeParams, HopPublicKey,

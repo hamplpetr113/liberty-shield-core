@@ -41,7 +41,11 @@ impl EncryptedRelayCell {
             .encrypt_packet(&aad, &encoded)
             .map_err(|e| match e {
                 SessionError::NonceExhausted => EncryptedRelayError::NonceExhausted,
-                SessionError::AuthenticationFailed => EncryptedRelayError::AuthenticationFailed,
+                // AuthenticationFailed and ReplayDetected cannot arise from encrypt_packet,
+                // but the match must be exhaustive.
+                SessionError::AuthenticationFailed | SessionError::ReplayDetected => {
+                    EncryptedRelayError::AuthenticationFailed
+                }
             })?;
         Ok(Self {
             sequence,

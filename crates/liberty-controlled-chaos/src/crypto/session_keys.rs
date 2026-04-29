@@ -18,6 +18,9 @@ pub enum SessionError {
     AuthenticationFailed,
     /// Send nonce exhausted; session must be renegotiated.
     NonceExhausted,
+    /// Sequence number ≤ last accepted (replay or out-of-order) — only from
+    /// `decrypt_packet_in_order`; the basic `decrypt_packet` does not track order.
+    ReplayDetected,
 }
 
 impl From<AeadError> for SessionError {
@@ -36,6 +39,9 @@ pub struct SessionKeys {
     recv_key: [u8; 32],
     /// Monotonically-increasing nonce for the send direction.
     send_sequence: u64,
+    /// Highest sequence number accepted by `decrypt_packet_in_order`.
+    /// `None` means no packet has been received yet on this session.
+    last_recv_sequence: Option<u64>,
 }
 
 impl SessionKeys {
@@ -45,6 +51,7 @@ impl SessionKeys {
             send_key,
             recv_key,
             send_sequence: 0,
+            last_recv_sequence: None,
         }
     }
 
@@ -95,11 +102,40 @@ impl SessionKeys {
         aead_open(&self.recv_key, &nonce, aad, ciphertext_and_tag).map_err(Into::into)
     }
 
-    /// Rotate keys (e.g., after a renegotiation) and reset the send nonce.
+    /// Rotate keys (e.g., after a renegotiation) and reset all state.
     pub fn rotate(&mut self, new_send: [u8; 32], new_recv: [u8; 32]) {
         self.send_key = new_send;
         self.recv_key = new_recv;
         self.send_sequence = 0;
+        self.last_recv_sequence = None;
+    }
+
+    /// Rotate keys using an explicit name.  Equivalent to `rotate`.
+    pub fn rotate_keys(&mut self, new_send: [u8; 32], new_recv: [u8; 32]) {
+        self.rotate(new_send, new_recv);
+    }
+
+    /// Decrypt a packet and enforce strictly-increasing sequence numbers.
+    ///
+    /// Unlike `decrypt_packet`, this method is `&mut self` and rejects any
+    /// packet whose sequence number is ≤ the last accepted sequence.  Use it
+    /// when you want the session itself to enforce anti-replay ordering.
+    ///
+    /// Returns `ReplayDetected` when `sequence <= last_recv_sequence`.
+    pub fn decrypt_packet_in_order(
+        &mut self,
+        aad: &[u8],
+        sequence: u64,
+        ciphertext_and_tag: &[u8],
+    ) -> Result<Vec<u8>, SessionError> {
+        if self.last_recv_sequence.is_some_and(|last| sequence <= last) {
+            return Err(SessionError::ReplayDetected);
+        }
+        let nonce = build_nonce(sequence);
+        let plaintext = aead_open(&self.recv_key, &nonce, aad, ciphertext_and_tag)
+            .map_err(|_| SessionError::AuthenticationFailed)?;
+        self.last_recv_sequence = Some(sequence);
+        Ok(plaintext)
     }
 
     /// Return `true` when the session is approaching nonce exhaustion and
@@ -274,5 +310,108 @@ mod tests {
         let mut keys = symmetric_keys();
         keys.send_sequence = MAX_SEQUENCE + 1; // past limit
         assert_eq!(keys.remaining_packets(), 0);
+    }
+
+    // SK14: rotate_keys resets send sequence and last_recv_sequence
+    #[test]
+    fn sk14_rotate_keys_resets_sequence() {
+        let mut keys = symmetric_keys();
+        keys.encrypt_packet(b"", b"msg").unwrap();
+        assert_eq!(keys.send_sequence(), 1);
+        let new_send = [0x11u8; 32];
+        let new_recv = [0x22u8; 32];
+        keys.rotate_keys(new_send, new_recv);
+        assert_eq!(
+            keys.send_sequence(),
+            0,
+            "sequence must reset after rotate_keys"
+        );
+        assert!(
+            keys.last_recv_sequence.is_none(),
+            "last_recv_sequence must reset after rotate_keys"
+        );
+    }
+
+    // SK15: rotating to new keys produces different ciphertext for same plaintext
+    #[test]
+    fn sk15_rotate_keys_changes_ciphertext() {
+        let mut k = symmetric_keys();
+        let ct_before = k.encrypt_packet(b"", b"test").unwrap();
+        k.rotate_keys([0x55u8; 32], [0x55u8; 32]);
+        let ct_after = k.encrypt_packet(b"", b"test").unwrap();
+        assert_ne!(
+            ct_before, ct_after,
+            "new keys must produce different ciphertext"
+        );
+    }
+
+    // SK16: after rotate_keys both sides can still encrypt/decrypt
+    #[test]
+    fn sk16_rotate_keys_decrypt_compatibility() {
+        // Use the same key for send and recv (symmetric test) so that sender's
+        // send_key matches receiver's recv_key after rotation.
+        let new_key = [0xCCu8; 32];
+
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+
+        sender.rotate_keys(new_key, new_key);
+        receiver.rotate_keys(new_key, new_key);
+
+        let ct = sender.encrypt_packet(b"aad", b"post-rotation").unwrap();
+        let seq = sender.send_sequence() - 1;
+        let plain = receiver.decrypt_packet(b"aad", seq, &ct).unwrap();
+        assert_eq!(&plain, b"post-rotation");
+    }
+
+    // AE1: nonce exhaustion prevents further encryption
+    #[test]
+    fn ae1_nonce_exhaustion_blocks_encrypt() {
+        let mut keys = symmetric_keys();
+        keys.send_sequence = MAX_SEQUENCE + 1;
+        assert_eq!(
+            keys.encrypt_packet(b"", b"payload").unwrap_err(),
+            SessionError::NonceExhausted
+        );
+    }
+
+    // AE2: decrypt_packet_in_order rejects an exact replay (same sequence)
+    #[test]
+    fn ae2_replay_rejected_in_order() {
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+
+        let ct = sender.encrypt_packet(b"", b"data").unwrap();
+        // First decrypt at seq=0 succeeds.
+        receiver.decrypt_packet_in_order(b"", 0, &ct).unwrap();
+        // Replaying the same sequence is rejected.
+        assert_eq!(
+            receiver.decrypt_packet_in_order(b"", 0, &ct).unwrap_err(),
+            SessionError::ReplayDetected
+        );
+    }
+
+    // AE3: decrypt_packet_in_order rejects a lower sequence (out-of-order)
+    #[test]
+    fn ae3_out_of_order_rejected() {
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+
+        // Send three packets; decrypt the third first.
+        let ct0 = sender.encrypt_packet(b"", b"p0").unwrap();
+        let ct1 = sender.encrypt_packet(b"", b"p1").unwrap();
+        let ct2 = sender.encrypt_packet(b"", b"p2").unwrap();
+
+        receiver.decrypt_packet_in_order(b"", 2, &ct2).unwrap();
+        // seq=1 is now below the last accepted (2) → rejected.
+        assert_eq!(
+            receiver.decrypt_packet_in_order(b"", 1, &ct1).unwrap_err(),
+            SessionError::ReplayDetected
+        );
+        // seq=0 also rejected.
+        assert_eq!(
+            receiver.decrypt_packet_in_order(b"", 0, &ct0).unwrap_err(),
+            SessionError::ReplayDetected
+        );
     }
 }
