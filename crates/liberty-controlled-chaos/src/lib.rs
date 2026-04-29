@@ -6,14 +6,18 @@ pub mod circuit_rotation;
 pub mod circuit_runtime;
 pub mod correlation_score_engine;
 pub mod cover_traffic;
+pub mod crypto;
+pub mod encrypted_relay;
 pub mod guard_selection;
 pub mod mesh_router;
 pub mod multi_circuit_distributor;
 pub mod node_discovery;
 pub mod noise_link;
+pub mod onion;
 pub mod onion_cell_protocol;
 pub mod onion_layer;
 pub mod path_fragmenter;
+pub mod proto;
 
 pub mod mesh_simulator;
 pub mod protocol_runtime;
