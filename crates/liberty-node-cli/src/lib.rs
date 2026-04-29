@@ -6,17 +6,25 @@ pub mod cluster_peering;
 pub mod cluster_topology;
 pub mod cluster_types;
 pub mod config;
+pub mod cover_traffic_engine;
 pub mod encrypted_cell_fixture;
+pub mod encrypted_circuit_path;
+pub mod encrypted_circuit_runtime;
 pub mod encrypted_peer_session;
 pub mod encrypted_udp_cluster;
 pub mod encrypted_udp_node;
 pub mod encrypted_udp_packet;
 pub mod encrypted_udp_socket;
 pub mod encrypted_udp_types;
+pub mod handshake_manager;
+pub mod handshake_message;
+pub mod handshake_state;
+pub mod handshake_types;
 pub mod identity;
 pub mod node_runtime;
 pub mod node_service;
 pub mod output;
+pub mod peer_directory;
 pub mod peer_table;
 pub mod runtime_state;
 pub mod udp_loopback_socket;
@@ -29,18 +37,24 @@ use args::{Command, parse_args};
 use cluster_manager::LocalCluster;
 use cluster_topology::{build_cluster_configs, parse_profile};
 use config::NodeConfig;
+use cover_traffic_engine::CoverTrafficEngine;
+use encrypted_circuit_path::EncryptedCircuitPath;
+use encrypted_circuit_runtime::EncryptedCircuitRuntime;
 use encrypted_udp_cluster::EncryptedUdpCluster;
+use encrypted_udp_types::EncryptedUdpNodeId;
 use node_runtime::NodeRuntime;
 use node_service::NodeService;
 use output::{
-    bench_json, cluster_bench_json, cluster_error_json, cluster_peers_json, cluster_run_json,
-    cluster_start_json, cluster_status_json, cluster_topology_json, encrypted_udp_bench_json,
+    bench_json, circuit_run_json, circuit_status_json, cluster_bench_json, cluster_error_json,
+    cluster_peers_json, cluster_run_json, cluster_start_json, cluster_status_json,
+    cluster_topology_json, cover_traffic_run_json, directory_status_json, encrypted_udp_bench_json,
     encrypted_udp_error_json, encrypted_udp_probe_json, encrypted_udp_send_json,
-    encrypted_udp_start_json, encrypted_udp_status_json, metrics_json, peers_json,
-    service_error_json, start_json, status_json, topology_json, udp_testnet_bench_json,
-    udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json, udp_testnet_start_json,
-    udp_testnet_status_json,
+    encrypted_udp_start_json, encrypted_udp_status_json, handshake_error_json, handshake_ring_json,
+    metrics_json, peers_json, service_error_json, start_json, status_json, topology_json,
+    udp_testnet_bench_json, udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json,
+    udp_testnet_start_json, udp_testnet_status_json,
 };
+use peer_directory::{PeerDescriptor, PeerDirectory, PeerRole};
 use udp_testnet_cluster::UdpTestnetCluster;
 
 pub fn run_cli(args: &[String]) -> String {
@@ -380,6 +394,106 @@ fn execute(cmd: Command) -> String {
             }
             let elapsed_us = t0.elapsed().as_micros() as u64;
             encrypted_udp_bench_json(nodes, rounds, total_sent, total_received, elapsed_us)
+                .to_string()
+        }
+
+        // ── Sprint 19-23 commands ─────────────────────────────────────────────
+        Command::HandshakeRing { nodes, base_port } => {
+            if nodes < 2 {
+                return handshake_error_json("nodes must be >= 2").to_string();
+            }
+            let mut cluster = match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return handshake_error_json(&format!("{e:?}")).to_string(),
+            };
+            if let Err(e) = cluster.handshake_ring() {
+                return handshake_error_json(&format!("{e:?}")).to_string();
+            }
+            let sessions_established = cluster
+                .snapshots()
+                .iter()
+                .map(|s| s.peer_count)
+                .sum::<usize>();
+            handshake_ring_json(nodes, base_port, sessions_established).to_string()
+        }
+        Command::CircuitRun {
+            nodes,
+            base_port: _,
+            rounds,
+        } => {
+            if nodes < 3 {
+                return handshake_error_json("nodes must be >= 3 for a circuit").to_string();
+            }
+            let mut rt = EncryptedCircuitRuntime::new();
+            let hops: Vec<EncryptedUdpNodeId> =
+                (1..=nodes as u64).map(EncryptedUdpNodeId).collect();
+            if let Err(e) =
+                EncryptedCircuitPath::new(1, hops, 1000).and_then(|path| rt.register_circuit(path))
+            {
+                return handshake_error_json(&format!("{e:?}")).to_string();
+            }
+            let mut packets_forwarded: u64 = 0;
+            for r in 0..rounds as u64 {
+                let payload = r.to_le_bytes().to_vec();
+                let mut pkt = match rt.send_on_circuit(1, &payload) {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                loop {
+                    match rt.forward_next(pkt) {
+                        Ok(Some(next)) => {
+                            packets_forwarded += 1;
+                            pkt = next;
+                        }
+                        Ok(None) => break,
+                        Err(_) => break,
+                    }
+                }
+            }
+            circuit_run_json(rounds, packets_forwarded, 1).to_string()
+        }
+        Command::CircuitStatus {
+            nodes,
+            base_port: _,
+        } => {
+            let mut rt = EncryptedCircuitRuntime::new();
+            // Register one circuit per valid hop count
+            for cid in 1..=(nodes.max(3) as u64) {
+                let hops: Vec<EncryptedUdpNodeId> =
+                    (1..=3).map(|h| EncryptedUdpNodeId(h * cid)).collect();
+                if let Ok(path) = EncryptedCircuitPath::new(cid, hops, 100) {
+                    let _ = rt.register_circuit(path);
+                }
+            }
+            circuit_status_json(rt.circuit_count()).to_string()
+        }
+        Command::DirectoryStatus { node_count } => {
+            let mut dir = PeerDirectory::new();
+            for id in 1..=node_count as u64 {
+                let desc = PeerDescriptor::deterministic(id, 45000);
+                let _ = dir.register_node(desc);
+            }
+            let list = dir.list_nodes();
+            let guard_count = list.iter().filter(|d| d.role == PeerRole::Guard).count();
+            let relay_count = list.iter().filter(|d| d.role == PeerRole::Relay).count();
+            let exit_count = list.iter().filter(|d| d.role == PeerRole::Exit).count();
+            directory_status_json(node_count, guard_count, relay_count, exit_count).to_string()
+        }
+        Command::CoverTrafficRun {
+            node_id,
+            seed,
+            count,
+        } => {
+            use liberty_controlled_chaos::noise_link::ENCRYPTED_CELL_SIZE;
+            let mut engine = CoverTrafficEngine::new(node_id, seed);
+            let mut all_correct = true;
+            for _ in 0..count {
+                let pkt = engine.generate_cover_packet();
+                if pkt.bytes.len() != ENCRYPTED_CELL_SIZE {
+                    all_correct = false;
+                }
+            }
+            cover_traffic_run_json(node_id, seed, count, ENCRYPTED_CELL_SIZE, all_correct)
                 .to_string()
         }
 
@@ -1618,5 +1732,245 @@ mod tests {
             total_received, 500,
             "all encrypted packets must be received"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 19-23 — CLI integration tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // CLI-S1: handshake-ring returns established JSON
+    #[test]
+    fn cli_s1_handshake_ring_json() {
+        let out = run_cli(&args("handshake-ring --nodes 3 --base-port 44300"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "handshake-ring");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["state"], "established");
+        assert_eq!(v["mode"], "loopback-only");
+        assert!(v["sessions_established"].as_u64().unwrap() > 0);
+    }
+
+    // CLI-S2: circuit-run returns forwarded packet count
+    #[test]
+    fn cli_s2_circuit_run_json() {
+        let out = run_cli(&args("circuit-run --nodes 3 --rounds 10"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "circuit-run");
+        assert_eq!(v["rounds"], 10);
+        assert_eq!(v["circuits"], 1);
+        assert!(v["packets_forwarded"].as_u64().unwrap() > 0);
+    }
+
+    // CLI-S3: circuit-status returns circuit count JSON
+    #[test]
+    fn cli_s3_circuit_status_json() {
+        let out = run_cli(&args("circuit-status --nodes 3"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "circuit-status");
+        assert!(v["circuits_registered"].as_u64().unwrap() > 0);
+    }
+
+    // CLI-S4: directory-status returns role breakdown
+    #[test]
+    fn cli_s4_directory_status_json() {
+        let out = run_cli(&args("directory-status --node-count 9"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "directory-status");
+        assert_eq!(v["node_count"], 9);
+        // Roles determined by node_id % 3: IDs 1..9 → 3 Guard, 3 Relay, 3 Exit
+        assert_eq!(v["guard_count"], 3);
+        assert_eq!(v["relay_count"], 3);
+        assert_eq!(v["exit_count"], 3);
+    }
+
+    // CLI-S5: cover-traffic-run returns correct packet size
+    #[test]
+    fn cli_s5_cover_traffic_run_json() {
+        use liberty_controlled_chaos::noise_link::ENCRYPTED_CELL_SIZE;
+        let out = run_cli(&args(
+            "cover-traffic-run --node-id 1 --seed 12345 --count 5",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "cover-traffic-run");
+        assert_eq!(v["count"], 5);
+        assert_eq!(v["packet_size"], ENCRYPTED_CELL_SIZE as u64);
+        assert_eq!(v["all_correct_size"], true);
+    }
+
+    // CLI-S6: handshake-ring nodes < 2 returns error
+    #[test]
+    fn cli_s6_handshake_ring_invalid_node_count() {
+        let out = run_cli(&args("handshake-ring --nodes 1 --base-port 44310"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // CLI-S7: handshake-ring output never contains "0.0.0.0"
+    #[test]
+    fn cli_s7_handshake_ring_no_public_address() {
+        let out = run_cli(&args("handshake-ring --nodes 3 --base-port 44320"));
+        assert!(
+            !out.contains("0.0.0.0"),
+            "handshake-ring must not output 0.0.0.0: {out}"
+        );
+    }
+
+    // CLI-S8: all Sprint 19-23 commands produce valid JSON
+    #[test]
+    fn cli_s8_all_new_commands_produce_valid_json() {
+        let cmds = [
+            "handshake-ring --nodes 3 --base-port 44330",
+            "circuit-run --nodes 3 --rounds 5",
+            "circuit-status --nodes 3",
+            "directory-status --node-count 6",
+            "cover-traffic-run --node-id 2 --seed 9999 --count 3",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            let parsed = serde_json::from_str::<serde_json::Value>(&out);
+            assert!(parsed.is_ok(), "JSON parse failed for `{cmd}`: {out}");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Security hardening tests S1–S8
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // S1: public bind rejected at EncryptedUdpNodeConfig level
+    #[test]
+    fn s1_public_bind_rejected_in_handshake_layer() {
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId,
+        };
+        let cfg = EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "0.0.0.0".to_string(),
+            bind_port: 44400,
+            allow_real_udp: true,
+            simulation_mode: false,
+        };
+        assert_eq!(cfg.validate(), Err(EncryptedUdpError::PublicBindRejected));
+    }
+
+    // S2: send_payload_encrypted without any session returns SessionNotFound
+    #[test]
+    fn s2_send_before_session_rejected() {
+        use crate::encrypted_udp_node::EncryptedUdpNode;
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId,
+        };
+        let mut node = EncryptedUdpNode::start(EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 44401,
+            allow_real_udp: true,
+            simulation_mode: false,
+        })
+        .unwrap();
+        let dummy: std::net::SocketAddr = "127.0.0.1:44402".parse().unwrap();
+        assert_eq!(
+            node.send_payload_encrypted(EncryptedUdpNodeId(2), dummy, b"data")
+                .unwrap_err(),
+            EncryptedUdpError::SessionNotFound
+        );
+    }
+
+    // S3: replaying a handshake message returns Duplicate
+    #[test]
+    fn s3_handshake_replay_rejected() {
+        use crate::handshake_manager::HandshakeManager;
+        use crate::handshake_types::{HandshakeError, HandshakeNodeId};
+        let id_a = HandshakeNodeId(1);
+        let id_b = HandshakeNodeId(2);
+        let mut a = HandshakeManager::new(id_a);
+        let mut b = HandshakeManager::new(id_b);
+        let m1 = a.start_handshake(id_b).unwrap();
+        b.receive_message(m1.clone()).unwrap(); // first receive ok
+        assert_eq!(
+            b.receive_message(m1).unwrap_err(),
+            HandshakeError::Duplicate
+        );
+    }
+
+    // S4: circuit with repeated node ID detected as loop
+    #[test]
+    fn s4_circuit_loop_rejected() {
+        use crate::encrypted_circuit_path::{CircuitError, EncryptedCircuitPath};
+        use crate::encrypted_udp_types::EncryptedUdpNodeId;
+        let hops = vec![
+            EncryptedUdpNodeId(1),
+            EncryptedUdpNodeId(2),
+            EncryptedUdpNodeId(1),
+        ];
+        assert_eq!(
+            EncryptedCircuitPath::new(1, hops, 10).unwrap_err(),
+            CircuitError::LoopDetected
+        );
+    }
+
+    // S5: duplicate circuit ID rejected
+    #[test]
+    fn s5_duplicate_circuit_rejected() {
+        use crate::encrypted_circuit_path::EncryptedCircuitPath;
+        use crate::encrypted_circuit_runtime::EncryptedCircuitRuntime;
+        use crate::encrypted_udp_types::EncryptedUdpNodeId;
+        let hops = vec![
+            EncryptedUdpNodeId(1),
+            EncryptedUdpNodeId(2),
+            EncryptedUdpNodeId(3),
+        ];
+        let mut rt = EncryptedCircuitRuntime::new();
+        rt.register_circuit(EncryptedCircuitPath::new(42, hops.clone(), 10).unwrap())
+            .unwrap();
+        // Attempting to register circuit ID 42 again must fail
+        assert!(
+            rt.register_circuit(EncryptedCircuitPath::new(42, hops, 10).unwrap())
+                .is_err()
+        );
+    }
+
+    // S6: TTL expiry is deterministic — circuit with TTL=2 expires after exactly 2 ticks
+    #[test]
+    fn s6_ttl_expiry_deterministic() {
+        use crate::encrypted_circuit_path::EncryptedCircuitPath;
+        use crate::encrypted_circuit_runtime::EncryptedCircuitRuntime;
+        use crate::encrypted_udp_types::EncryptedUdpNodeId;
+        let hops = vec![
+            EncryptedUdpNodeId(1),
+            EncryptedUdpNodeId(2),
+            EncryptedUdpNodeId(3),
+        ];
+        let mut rt = EncryptedCircuitRuntime::new();
+        rt.register_circuit(EncryptedCircuitPath::new(99, hops, 2).unwrap())
+            .unwrap();
+        assert!(rt.tick_ttl(99).unwrap()); // ttl=1, alive
+        assert!(!rt.tick_ttl(99).unwrap()); // ttl=0, expired
+        // Send should now fail with TtlExpired
+        assert!(rt.send_on_circuit(99, b"late").is_err());
+    }
+
+    // S7: default NodeConfig is simulation-only (no real UDP permitted)
+    #[test]
+    fn s7_default_config_simulation_only() {
+        let cfg = config::NodeConfig::default();
+        assert!(cfg.simulation_mode, "default must be simulation mode");
+        assert!(!cfg.allow_real_udp, "default must not allow real UDP");
+    }
+
+    // S8: encrypted-udp commands never emit "0.0.0.0" in their JSON output
+    #[test]
+    fn s8_encrypted_commands_no_public_address_in_output() {
+        let cmds = [
+            "handshake-ring --nodes 3 --base-port 44410",
+            "encrypted-udp-start --nodes 3 --base-port 44420",
+            "encrypted-udp-status --nodes 3 --base-port 44430",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            assert!(
+                !out.contains("0.0.0.0"),
+                "command `{cmd}` must not output public address; got: {out}"
+            );
+        }
     }
 }

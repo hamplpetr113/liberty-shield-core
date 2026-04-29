@@ -102,6 +102,55 @@ impl EncryptedUdpCluster {
         self.nodes.len()
     }
 
+    /// Establish sessions for the ring topology via 3-message handshake.
+    ///
+    /// For each adjacent pair (i, (i+1)%n), the lower-indexed node acts as initiator.
+    /// After completion, each node has a session with its immediate neighbours.
+    pub fn handshake_ring(&mut self) -> Result<(), EncryptedUdpError> {
+        let n = self.nodes.len();
+        if n < 2 {
+            return Err(EncryptedUdpError::InvalidNode);
+        }
+        let ids: Vec<_> = self.nodes.iter().map(|nd| nd.snapshot().node_id).collect();
+        for i in 0..n {
+            let next = (i + 1) % n;
+            let m1 = self.nodes[i].begin_handshake(ids[next])?;
+            let m2 = self.nodes[next]
+                .poll_handshake(m1)?
+                .ok_or(EncryptedUdpError::HandshakeError)?;
+            let m3 = self.nodes[i]
+                .poll_handshake(m2)?
+                .ok_or(EncryptedUdpError::HandshakeError)?;
+            self.nodes[next].poll_handshake(m3)?;
+        }
+        Ok(())
+    }
+
+    /// Establish sessions for all node pairs via 3-message handshake (full mesh).
+    ///
+    /// For each ordered pair (i, j) where i < j, node i is the initiator.
+    /// After completion every node has a session with every other node.
+    pub fn handshake_full_mesh(&mut self) -> Result<(), EncryptedUdpError> {
+        let n = self.nodes.len();
+        if n < 2 {
+            return Err(EncryptedUdpError::InvalidNode);
+        }
+        let ids: Vec<_> = self.nodes.iter().map(|nd| nd.snapshot().node_id).collect();
+        for i in 0..n {
+            for (j, &peer_j_id) in ids.iter().enumerate().skip(i + 1) {
+                let m1 = self.nodes[i].begin_handshake(peer_j_id)?;
+                let m2 = self.nodes[j]
+                    .poll_handshake(m1)?
+                    .ok_or(EncryptedUdpError::HandshakeError)?;
+                let m3 = self.nodes[i]
+                    .poll_handshake(m2)?
+                    .ok_or(EncryptedUdpError::HandshakeError)?;
+                self.nodes[j].poll_handshake(m3)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn stop_all(&mut self) {
         self.nodes.clear();
     }
@@ -187,5 +236,45 @@ mod tests {
         assert_eq!(snaps[0].local_addr.port(), 43090);
         assert_eq!(snaps[1].local_addr.port(), 43091);
         assert_eq!(snaps[2].local_addr.port(), 43092);
+    }
+
+    // I5: handshake_ring establishes sessions for all adjacent pairs
+    #[test]
+    fn i5_handshake_ring_establishes_sessions() {
+        let mut cluster = EncryptedUdpCluster::start_loopback_cluster(3, 44060).unwrap();
+        cluster.handshake_ring().unwrap();
+        let snaps = cluster.snapshots();
+        // In a 3-node ring each node participates in 2 handshake pairs → 2 sessions
+        for snap in &snaps {
+            assert!(
+                snap.peer_count >= 1,
+                "each node must have at least one peer session after ring handshake"
+            );
+        }
+    }
+
+    // I6: encrypted ring send succeeds after handshake_ring
+    #[test]
+    fn i6_encrypted_ring_after_handshake() {
+        let mut cluster = EncryptedUdpCluster::start_loopback_cluster(3, 44070).unwrap();
+        cluster.handshake_ring().unwrap();
+        cluster.send_encrypted_ring(b"post-handshake ring").unwrap();
+        let received = cluster.poll_all();
+        assert_eq!(received, 3);
+    }
+
+    // I7: handshake_full_mesh establishes sessions between all node pairs
+    #[test]
+    fn i7_handshake_full_mesh() {
+        let mut cluster = EncryptedUdpCluster::start_loopback_cluster(4, 44080).unwrap();
+        cluster.handshake_full_mesh().unwrap();
+        let snaps = cluster.snapshots();
+        // In a 4-node full mesh each node has 3 peers
+        for snap in &snaps {
+            assert_eq!(
+                snap.peer_count, 3,
+                "each node must have a session with every other node"
+            );
+        }
     }
 }

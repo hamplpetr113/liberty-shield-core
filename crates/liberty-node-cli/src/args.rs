@@ -67,6 +67,27 @@ pub enum Command {
         base_port: u16,
         rounds: usize,
     },
+    HandshakeRing {
+        nodes: usize,
+        base_port: u16,
+    },
+    CircuitRun {
+        nodes: usize,
+        base_port: u16,
+        rounds: usize,
+    },
+    CircuitStatus {
+        nodes: usize,
+        base_port: u16,
+    },
+    DirectoryStatus {
+        node_count: usize,
+    },
+    CoverTrafficRun {
+        node_id: u64,
+        seed: u64,
+        count: usize,
+    },
     Run {
         node_count: usize,
         circuits: usize,
@@ -214,6 +235,45 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 rounds: extract_usize(&args[1..], "--rounds").unwrap_or(100),
             },
         }),
+        "handshake-ring" => Ok(CliArgs {
+            command: Command::HandshakeRing {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(44300),
+            },
+        }),
+        "circuit-run" => Ok(CliArgs {
+            command: Command::CircuitRun {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(44310),
+                rounds: extract_usize(&args[1..], "--rounds").unwrap_or(10),
+            },
+        }),
+        "circuit-status" => Ok(CliArgs {
+            command: Command::CircuitStatus {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(44320),
+            },
+        }),
+        "directory-status" => Ok(CliArgs {
+            command: Command::DirectoryStatus {
+                node_count: extract_usize(&args[1..], "--node-count").unwrap_or(10),
+            },
+        }),
+        "cover-traffic-run" => Ok(CliArgs {
+            command: Command::CoverTrafficRun {
+                node_id: extract_usize(&args[1..], "--node-id")
+                    .unwrap_or(1) as u64,
+                seed: extract_usize(&args[1..], "--seed")
+                    .unwrap_or(0xABCD) as u64,
+                count: extract_usize(&args[1..], "--count").unwrap_or(5),
+            },
+        }),
         "run" => Ok(CliArgs {
             command: Command::Run {
                 node_count: extract_usize(&args[1..], "--node-count").unwrap_or(100),
@@ -234,11 +294,11 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             },
         }),
         "" => Err(
-            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|run|topology|bench>"
+            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|run|topology|bench>"
                 .to_string(),
         ),
         other => Err(format!(
-            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|run|topology|bench>"
+            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|run|topology|bench>"
         )),
     }
 }

@@ -13,12 +13,16 @@ use crate::encrypted_udp_socket::EncryptedUdpSocket;
 use crate::encrypted_udp_types::{
     EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId, EncryptedUdpPacketKind,
 };
+use crate::handshake_manager::HandshakeManager;
+use crate::handshake_message::HandshakeMessage;
+use crate::handshake_types::HandshakeNodeId;
 
 #[derive(Debug)]
 pub struct EncryptedUdpNode {
     config: EncryptedUdpNodeConfig,
     socket: EncryptedUdpSocket,
     sessions: EncryptedPeerSessionTable,
+    handshake: HandshakeManager,
     sequence_counter: u64,
     pub packets_sent: u64,
     pub packets_received: u64,
@@ -44,10 +48,12 @@ impl EncryptedUdpNode {
     pub fn start(config: EncryptedUdpNodeConfig) -> Result<Self, EncryptedUdpError> {
         config.validate()?;
         let socket = EncryptedUdpSocket::bind(&config)?;
+        let node_id_val = config.node_id.0;
         Ok(Self {
             config,
             socket,
             sessions: EncryptedPeerSessionTable::new(),
+            handshake: HandshakeManager::new(HandshakeNodeId(node_id_val)),
             sequence_counter: 0,
             packets_sent: 0,
             packets_received: 0,
@@ -137,9 +143,7 @@ impl EncryptedUdpNode {
         self.packets_received += 1;
 
         match packet.packet_kind {
-            EncryptedUdpPacketKind::Shutdown => {
-                Ok(Some(Vec::new()))
-            }
+            EncryptedUdpPacketKind::Shutdown => Ok(Some(Vec::new())),
             EncryptedUdpPacketKind::EncryptedCell | EncryptedUdpPacketKind::ProbeEncrypted => {
                 let enc_cell = match bytes_to_encrypted_cell(&packet.encrypted_cell_bytes) {
                     Ok(c) => c,
@@ -180,6 +184,47 @@ impl EncryptedUdpNode {
                 Ok(Some(cell.payload_bytes().to_vec()))
             }
         }
+    }
+
+    /// Begin a handshake as initiator with `peer_id`. Returns the ClientHello message.
+    pub fn begin_handshake(
+        &mut self,
+        peer_id: EncryptedUdpNodeId,
+    ) -> Result<HandshakeMessage, EncryptedUdpError> {
+        self.handshake
+            .start_handshake(HandshakeNodeId(peer_id.0))
+            .map_err(|_| EncryptedUdpError::HandshakeError)
+    }
+
+    /// Process an inbound handshake message. Returns a reply message when needed.
+    ///
+    /// When the handshake reaches `Established`, automatically installs a peer session
+    /// using the derived seeds so that `send_payload_encrypted` becomes available.
+    pub fn poll_handshake(
+        &mut self,
+        msg: HandshakeMessage,
+    ) -> Result<Option<HandshakeMessage>, EncryptedUdpError> {
+        let peer_hid = msg.source_node;
+        let peer_udp_id = EncryptedUdpNodeId(peer_hid.0);
+        let response = self
+            .handshake
+            .receive_message(msg)
+            .map_err(|_| EncryptedUdpError::HandshakeError)?;
+        if self.handshake.is_established(peer_hid) && !self.sessions.has_peer(peer_udp_id) {
+            let (send_seed, recv_seed) = self
+                .handshake
+                .derive_session_seeds(peer_hid)
+                .map_err(|_| EncryptedUdpError::HandshakeError)?;
+            self.sessions
+                .add_peer(peer_udp_id, send_seed, recv_seed)
+                .map_err(|_| EncryptedUdpError::HandshakeError)?;
+        }
+        Ok(response)
+    }
+
+    /// Returns `true` when the handshake with `peer_id` has reached `Established`.
+    pub fn is_session_established(&self, peer_id: EncryptedUdpNodeId) -> bool {
+        self.handshake.is_established(HandshakeNodeId(peer_id.0))
     }
 
     pub fn snapshot(&self) -> EncryptedUdpNodeSnapshot {
@@ -346,6 +391,64 @@ mod tests {
         assert_eq!(
             receiver.poll_once().unwrap_err(),
             EncryptedUdpError::ReplayDetected
+        );
+    }
+
+    // I1: begin_handshake returns ClientHello addressed to the peer
+    #[test]
+    fn i1_begin_handshake_returns_client_hello() {
+        use crate::handshake_types::HandshakeMessageType;
+        let mut a = EncryptedUdpNode::start(node_config(1, 44050)).unwrap();
+        let msg = a.begin_handshake(EncryptedUdpNodeId(2)).unwrap();
+        assert_eq!(msg.message_type, HandshakeMessageType::ClientHello);
+        assert_eq!(msg.source_node.0, 1);
+        assert_eq!(msg.target_node.0, 2);
+        assert!(!a.is_session_established(EncryptedUdpNodeId(2)));
+    }
+
+    // I2: 3-message handshake between two nodes both reach Established
+    #[test]
+    fn i2_full_handshake_establishes_session() {
+        let mut a = EncryptedUdpNode::start(node_config(1, 44051)).unwrap();
+        let mut b = EncryptedUdpNode::start(node_config(2, 44052)).unwrap();
+        let m1 = a.begin_handshake(EncryptedUdpNodeId(2)).unwrap();
+        let m2 = b.poll_handshake(m1).unwrap().unwrap();
+        let m3 = a.poll_handshake(m2).unwrap().unwrap();
+        b.poll_handshake(m3).unwrap();
+        assert!(a.is_session_established(EncryptedUdpNodeId(2)));
+        assert!(b.is_session_established(EncryptedUdpNodeId(1)));
+        assert_eq!(a.snapshot().peer_count, 1);
+        assert_eq!(b.snapshot().peer_count, 1);
+    }
+
+    // I3: send_payload_encrypted works immediately after handshake completes
+    #[test]
+    fn i3_send_encrypted_after_handshake() {
+        let mut a = EncryptedUdpNode::start(node_config(1, 44053)).unwrap();
+        let mut b = EncryptedUdpNode::start(node_config(2, 44054)).unwrap();
+        let b_addr = b.snapshot().local_addr;
+        let m1 = a.begin_handshake(EncryptedUdpNodeId(2)).unwrap();
+        let m2 = b.poll_handshake(m1).unwrap().unwrap();
+        let m3 = a.poll_handshake(m2).unwrap().unwrap();
+        b.poll_handshake(m3).unwrap();
+        a.send_payload_encrypted(EncryptedUdpNodeId(2), b_addr, b"handshake payload")
+            .unwrap();
+        let received = b.poll_once().unwrap().unwrap();
+        assert_eq!(&received[..17], b"handshake payload");
+    }
+
+    // I4: begin_handshake on already-established peer returns HandshakeError
+    #[test]
+    fn i4_begin_handshake_already_established_rejected() {
+        let mut a = EncryptedUdpNode::start(node_config(1, 44055)).unwrap();
+        let mut b = EncryptedUdpNode::start(node_config(2, 44056)).unwrap();
+        let m1 = a.begin_handshake(EncryptedUdpNodeId(2)).unwrap();
+        let m2 = b.poll_handshake(m1).unwrap().unwrap();
+        let m3 = a.poll_handshake(m2).unwrap().unwrap();
+        b.poll_handshake(m3).unwrap();
+        assert_eq!(
+            a.begin_handshake(EncryptedUdpNodeId(2)).unwrap_err(),
+            EncryptedUdpError::HandshakeError
         );
     }
 

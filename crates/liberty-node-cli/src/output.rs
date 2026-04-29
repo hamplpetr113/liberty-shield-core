@@ -408,3 +408,68 @@ pub fn encrypted_udp_bench_json(
 pub fn encrypted_udp_error_json(msg: &str) -> Value {
     json!({ "error": msg })
 }
+
+// ── Sprint 19-23 outputs ──────────────────────────────────────────────────────
+
+pub fn handshake_ring_json(nodes: usize, base_port: u16, sessions_established: usize) -> Value {
+    json!({
+        "command": "handshake-ring",
+        "mode": "loopback-only",
+        "nodes": nodes,
+        "base_port": base_port,
+        "sessions_established": sessions_established,
+        "state": "established"
+    })
+}
+
+pub fn circuit_run_json(rounds: usize, packets_forwarded: u64, circuits: usize) -> Value {
+    json!({
+        "command": "circuit-run",
+        "rounds": rounds,
+        "circuits": circuits,
+        "packets_forwarded": packets_forwarded
+    })
+}
+
+pub fn circuit_status_json(circuits_registered: usize) -> Value {
+    json!({
+        "command": "circuit-status",
+        "circuits_registered": circuits_registered
+    })
+}
+
+pub fn directory_status_json(
+    node_count: usize,
+    guard_count: usize,
+    relay_count: usize,
+    exit_count: usize,
+) -> Value {
+    json!({
+        "command": "directory-status",
+        "node_count": node_count,
+        "guard_count": guard_count,
+        "relay_count": relay_count,
+        "exit_count": exit_count
+    })
+}
+
+pub fn cover_traffic_run_json(
+    node_id: u64,
+    seed: u64,
+    count: usize,
+    packet_size: usize,
+    all_correct_size: bool,
+) -> Value {
+    json!({
+        "command": "cover-traffic-run",
+        "node_id": node_id,
+        "seed": seed,
+        "count": count,
+        "packet_size": packet_size,
+        "all_correct_size": all_correct_size
+    })
+}
+
+pub fn handshake_error_json(msg: &str) -> Value {
+    json!({ "error": msg })
+}

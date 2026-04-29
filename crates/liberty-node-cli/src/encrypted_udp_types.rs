@@ -34,6 +34,7 @@ pub enum EncryptedUdpError {
     SessionNotFound,
     EncryptionFailed,
     DecryptionFailed,
+    HandshakeError,
 }
 
 #[derive(Debug, Clone, PartialEq)]
