@@ -6,6 +6,15 @@
 //!
 //! All operations are O(1) with no heap allocation.
 
+/// A point-in-time snapshot of `BitmapReplayWindow` state for persistence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayWindowSnapshot {
+    /// Highest sequence number seen when the snapshot was taken.
+    pub max_seen: u64,
+    /// Bitmap state at the time of the snapshot.
+    pub bitmap: u128,
+}
+
 /// Error returned by [`BitmapReplayWindow::check_and_record`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowError {
@@ -91,6 +100,24 @@ impl BitmapReplayWindow {
         self.max_seen = None;
         self.bitmap = 0;
     }
+
+    /// Capture current state as a snapshot for persistent storage.
+    ///
+    /// Returns `None` when no packets have been received yet.
+    pub fn snapshot(&self) -> Option<ReplayWindowSnapshot> {
+        self.max_seen.map(|max| ReplayWindowSnapshot {
+            max_seen: max,
+            bitmap: self.bitmap,
+        })
+    }
+
+    /// Restore state from a previously-captured snapshot.
+    ///
+    /// Overwrites any existing state; use with care.
+    pub fn restore(&mut self, snap: ReplayWindowSnapshot) {
+        self.max_seen = Some(snap.max_seen);
+        self.bitmap = snap.bitmap;
+    }
 }
 
 #[cfg(test)]
@@ -160,5 +187,40 @@ mod tests {
         assert_eq!(w.max_seen(), None);
         // After reset, sequence 42 is fresh again.
         assert!(w.check_and_record(42).is_ok());
+    }
+
+    // SW7: snapshot returns None on empty window; Some once a packet is seen
+    #[test]
+    fn sw7_snapshot_empty_and_non_empty() {
+        let mut w = BitmapReplayWindow::new();
+        assert!(w.snapshot().is_none());
+        w.check_and_record(77).unwrap();
+        let snap = w.snapshot().unwrap();
+        assert_eq!(snap.max_seen, 77);
+        // Bit 0 is set (seq 77 = max_seen).
+        assert_eq!(snap.bitmap & 1, 1);
+    }
+
+    // SW8: restore from snapshot produces identical duplicate-detection behaviour
+    #[test]
+    fn sw8_snapshot_restore_roundtrip() {
+        let mut original = BitmapReplayWindow::new();
+        original.check_and_record(100).unwrap();
+        original.check_and_record(98).unwrap();
+        original.check_and_record(99).unwrap();
+
+        let snap = original.snapshot().unwrap();
+
+        let mut restored = BitmapReplayWindow::new();
+        restored.restore(snap);
+
+        // Same max_seen.
+        assert_eq!(restored.max_seen(), Some(100));
+        // Previously-seen sequences are replays in the restored window.
+        assert!(restored.check_and_record(100).is_err());
+        assert!(restored.check_and_record(98).is_err());
+        assert!(restored.check_and_record(99).is_err());
+        // A fresh sequence is accepted.
+        assert!(restored.check_and_record(101).is_ok());
     }
 }

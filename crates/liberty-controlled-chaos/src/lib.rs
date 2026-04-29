@@ -25,6 +25,7 @@ pub mod relay_protocol;
 pub mod replay_protection;
 pub mod route_shadower;
 pub mod runtime_boundary;
+pub mod security_state;
 pub mod stream_mux;
 pub mod temporal_decoupler;
 pub mod traffic_classifier;

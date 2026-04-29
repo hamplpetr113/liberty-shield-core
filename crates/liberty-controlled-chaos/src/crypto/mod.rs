@@ -35,7 +35,7 @@ mod sha256;
 mod x25519;
 
 pub use aead::{AeadError, aead_open, aead_seal};
-pub use bitmap_window::{BitmapReplayWindow, WindowError};
+pub use bitmap_window::{BitmapReplayWindow, ReplayWindowSnapshot, WindowError};
 pub use hkdf::{derive_session_keys, hkdf, hkdf_expand, hkdf_extract};
 pub use session_keys::{MAX_SEQUENCE, SessionError, SessionKeys, SessionState};
 pub use sha256::{hmac_sha256, sha256};
