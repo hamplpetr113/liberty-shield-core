@@ -6,6 +6,9 @@ mod detector;
 mod types;
 mod window;
 
+#[cfg(test)]
+mod extended_tests;
+
 pub use detector::ReplayDetector;
 pub use types::{CellNonce, ReplayError};
 pub use window::ReplayWindow;
