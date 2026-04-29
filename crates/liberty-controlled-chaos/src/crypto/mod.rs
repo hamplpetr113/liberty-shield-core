@@ -26,6 +26,7 @@
 //! ```
 
 mod aead;
+mod bitmap_window;
 mod chacha20;
 mod hkdf;
 mod poly1305;
@@ -34,8 +35,9 @@ mod sha256;
 mod x25519;
 
 pub use aead::{AeadError, aead_open, aead_seal};
+pub use bitmap_window::{BitmapReplayWindow, WindowError};
 pub use hkdf::{derive_session_keys, hkdf, hkdf_expand, hkdf_extract};
-pub use session_keys::{MAX_SEQUENCE, SessionError, SessionKeys};
+pub use session_keys::{MAX_SEQUENCE, SessionError, SessionKeys, SessionState};
 pub use sha256::{hmac_sha256, sha256};
 pub use x25519::{
     EphemeralKeypair, X25519_BASEPOINT, X25519PrivateKey, X25519PublicKey, X25519SharedSecret,

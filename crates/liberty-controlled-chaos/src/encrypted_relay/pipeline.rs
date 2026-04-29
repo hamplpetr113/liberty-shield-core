@@ -7,10 +7,14 @@ use std::collections::HashMap;
 
 use crate::crypto::SessionKeys;
 use crate::replay_protection::{CellNonce, ReplayDetector, ReplayError};
+use crate::transport::TransportReplayFilter;
 
 use super::cell::EncryptedRelayCell;
 use super::errors::EncryptedRelayError;
 use super::types::RelayCellPlaintext;
+
+/// Default capacity of the per-circuit `TransportReplayFilter`.
+const TRANSPORT_FILTER_CAPACITY: usize = 512;
 
 /// Decision returned after processing one cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +37,8 @@ pub struct RelayPipeline {
     send_sessions: HashMap<u64, SessionKeys>,
     /// Sliding-window replay detector.
     replay: ReplayDetector,
+    /// Per-circuit transport-layer LRU replay filter (fast first-pass check).
+    transport_filters: HashMap<u64, TransportReplayFilter>,
 }
 
 impl RelayPipeline {
@@ -41,6 +47,7 @@ impl RelayPipeline {
             recv_sessions: HashMap::new(),
             send_sessions: HashMap::new(),
             replay: ReplayDetector::new(),
+            transport_filters: HashMap::new(),
         }
     }
 
@@ -55,6 +62,10 @@ impl RelayPipeline {
         self.recv_sessions.insert(circuit_id, recv_session);
         self.replay
             .register_circuit(crate::circuit_builder::CircuitId(circuit_id));
+        self.transport_filters.insert(
+            circuit_id,
+            TransportReplayFilter::new(TRANSPORT_FILTER_CAPACITY),
+        );
     }
 
     /// Remove all state for a circuit.
@@ -63,6 +74,7 @@ impl RelayPipeline {
         self.recv_sessions.remove(&circuit_id);
         self.replay
             .remove_circuit(crate::circuit_builder::CircuitId(circuit_id));
+        self.transport_filters.remove(&circuit_id);
     }
 
     /// Encrypt a plaintext cell on the send path.
@@ -87,7 +99,14 @@ impl RelayPipeline {
         stream_id: u64,
         enc: &EncryptedRelayCell,
     ) -> PipelineResult {
-        // Replay check first (before decryption — fail fast).
+        // Transport-layer LRU filter: fast first-pass duplicate check.
+        if let Some(filter) = self.transport_filters.get_mut(&circuit_id)
+            && !filter.check_and_record(enc.sequence)
+        {
+            return PipelineResult::ReplayRejected;
+        }
+
+        // Sequence-window replay check (before decryption — fail fast).
         let cid = crate::circuit_builder::CircuitId(circuit_id);
         match self.replay.check_cell(cid, CellNonce(enc.sequence)) {
             Err(ReplayError::DuplicateNonce) | Err(ReplayError::WindowExpired) => {

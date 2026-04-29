@@ -306,6 +306,25 @@ New `SessionKeys` API: `rotate_keys`, `decrypt_packet_in_order`,
 
 ---
 
+## Sprint 39 — Replay Window and Session Lifecycle Hardening
+
+Added bitmap sliding replay window, persistent rekey nonce store, session
+lifecycle state machine, and transport-layer replay filter.  See
+`docs/runtime/sprint39_replay_window.md` for full details.
+
+New modules: `crypto/bitmap_window.rs`, `onion/rekey_guard.rs`,
+`transport/replay_filter.rs`.
+
+New `SessionKeys` API: `decrypt_packet_with_window`, `state()`, `is_usable()`,
+`begin_rekey()`, `complete_rekey()`, `expire()`, `SessionState` enum.
+
+New `BitmapReplayWindow` exported from `crypto`: O(1) 128-packet window.
+
+`RelayPipeline` now integrates `TransportReplayFilter` (capacity 512) as a
+fast first-pass duplicate check before AEAD decryption.
+
+---
+
 ## Test Coverage Summary
 
 | Module | Tests |
@@ -315,13 +334,16 @@ New `SessionKeys` API: `rotate_keys`, `decrypt_packet_in_order`,
 | `crypto/poly1305` | 6 (PL1–PL6) |
 | `crypto/aead` | 10 (AE1–AE10) |
 | `crypto/hkdf` | 7 (HK1–HK7) |
-| `crypto/session_keys` | 19 (SK1–SK16, AE1–AE3) |
+| `crypto/bitmap_window` | 6 (SW1–SW6) |
+| `crypto/session_keys` | 25 (SK1–SK16, AE1–AE3, DW1–DW3, SL1–SL3) |
 | `proto/cell_frame` | 11 (CF1–CF11) |
 | `replay_protection` (extended) | 12 (RW7–RW18) |
 | `encrypted_relay/cell` | 10 (ER1–ER10) |
 | `encrypted_relay/pipeline` | 6 (RP1–RP6) |
 | `onion/handshake` | 13 (HS1–HS13) |
 | `onion/rekey` | 4 (RK1–RK4) |
+| `onion/rekey_guard` | 3 (RG1–RG3) |
 | `crypto/x25519` (ephemeral) | 3 (FS1–FS3) |
 | `mesh_simulator` (large-scale) | 15 (LS1–LS15) |
-| **Total (Sprint 31-38)** | **129** |
+| `transport/replay_filter` | 3 (TR1–TR3) |
+| **Total (Sprint 31-39)** | **147** |

@@ -29,6 +29,7 @@ pub mod stream_mux;
 pub mod temporal_decoupler;
 pub mod traffic_classifier;
 pub mod transmitter;
+pub mod transport;
 pub mod udp_transport;
 
 pub use route_shadower::{

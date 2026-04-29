@@ -5,8 +5,10 @@
 
 pub mod handshake;
 pub mod rekey;
+pub mod rekey_guard;
 
 pub use handshake::{
     HandshakeError, HandshakeResult, HandshakeState, HopHandshakeParams, HopPublicKey,
     build_circuit_keys, complete_handshake, generate_public_key,
 };
+pub use rekey_guard::RekeyNonceStore;

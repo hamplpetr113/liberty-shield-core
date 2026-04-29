@@ -5,11 +5,25 @@
 //! is the 4-byte fixed part (zeroed) followed by the 8-byte send counter.
 
 use super::aead::{AeadError, aead_open, aead_seal};
+use super::bitmap_window::BitmapReplayWindow;
 use super::hkdf::derive_session_keys;
 
 /// Maximum allowed sequence number before a session must be renegotiated.
 /// (2^64-1 is the hard limit; we soft-expire at 2^48 for safety margin.)
 pub const MAX_SEQUENCE: u64 = (1u64 << 48) - 1;
+
+/// Lifecycle state of a `SessionKeys` instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionState {
+    /// Normal operation — packets can be sent and received.
+    Active,
+    /// A rekey exchange is in progress; the session is still usable but
+    /// should not accept further long-term traffic until `complete_rekey` is
+    /// called.
+    Rekeying,
+    /// The session has been explicitly expired and must not be used.
+    Expired,
+}
 
 /// Errors from `SessionKeys`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,8 +32,9 @@ pub enum SessionError {
     AuthenticationFailed,
     /// Send nonce exhausted; session must be renegotiated.
     NonceExhausted,
-    /// Sequence number ≤ last accepted (replay or out-of-order) — only from
-    /// `decrypt_packet_in_order`; the basic `decrypt_packet` does not track order.
+    /// Sequence number already seen or outside the replay window — only from
+    /// `decrypt_packet_in_order` and `decrypt_packet_with_window`; the basic
+    /// `decrypt_packet` does not track order.
     ReplayDetected,
 }
 
@@ -42,6 +57,10 @@ pub struct SessionKeys {
     /// Highest sequence number accepted by `decrypt_packet_in_order`.
     /// `None` means no packet has been received yet on this session.
     last_recv_sequence: Option<u64>,
+    /// Bitmap sliding window for `decrypt_packet_with_window`.
+    replay_window: BitmapReplayWindow,
+    /// Current lifecycle state of this session.
+    state: SessionState,
 }
 
 impl SessionKeys {
@@ -52,6 +71,8 @@ impl SessionKeys {
             recv_key,
             send_sequence: 0,
             last_recv_sequence: None,
+            replay_window: BitmapReplayWindow::new(),
+            state: SessionState::Active,
         }
     }
 
@@ -66,6 +87,38 @@ impl SessionKeys {
     /// Return the current send sequence number.
     pub fn send_sequence(&self) -> u64 {
         self.send_sequence
+    }
+
+    /// Return the current session lifecycle state.
+    pub fn state(&self) -> SessionState {
+        self.state
+    }
+
+    /// Return `true` when the session may still process traffic
+    /// (`Active` or `Rekeying`).
+    pub fn is_usable(&self) -> bool {
+        matches!(self.state, SessionState::Active | SessionState::Rekeying)
+    }
+
+    /// Transition to `Rekeying`; call before starting a rekey exchange.
+    pub fn begin_rekey(&mut self) {
+        self.state = SessionState::Rekeying;
+    }
+
+    /// Complete a rekey: install new keys and return to `Active`.
+    ///
+    /// Equivalent to `rotate_keys` + state transition.  Call after both
+    /// sides have derived fresh keys from the ephemeral DH.
+    pub fn complete_rekey(&mut self, new_send: [u8; 32], new_recv: [u8; 32]) {
+        self.rotate(new_send, new_recv);
+        self.state = SessionState::Active;
+    }
+
+    /// Mark the session as expired.  An expired session must not be used;
+    /// all encrypt/decrypt calls will still execute but callers should check
+    /// `is_usable()` before sending.
+    pub fn expire(&mut self) {
+        self.state = SessionState::Expired;
     }
 
     /// Encrypt `plaintext` with the send key.
@@ -108,6 +161,7 @@ impl SessionKeys {
         self.recv_key = new_recv;
         self.send_sequence = 0;
         self.last_recv_sequence = None;
+        self.replay_window.reset();
     }
 
     /// Rotate keys using an explicit name.  Equivalent to `rotate`.
@@ -138,6 +192,25 @@ impl SessionKeys {
         Ok(plaintext)
     }
 
+    /// Decrypt a packet using the 128-packet bitmap sliding window.
+    ///
+    /// Accepts out-of-order delivery within a 128-sequence window; rejects
+    /// duplicates and packets older than 128 behind the highest seen.
+    /// Returns `ReplayDetected` for both duplicates and too-old sequences.
+    pub fn decrypt_packet_with_window(
+        &mut self,
+        aad: &[u8],
+        sequence: u64,
+        ciphertext_and_tag: &[u8],
+    ) -> Result<Vec<u8>, SessionError> {
+        self.replay_window
+            .check_and_record(sequence)
+            .map_err(|_| SessionError::ReplayDetected)?;
+        let nonce = build_nonce(sequence);
+        aead_open(&self.recv_key, &nonce, aad, ciphertext_and_tag)
+            .map_err(|_| SessionError::AuthenticationFailed)
+    }
+
     /// Return `true` when the session is approaching nonce exhaustion and
     /// should be renegotiated soon.  Triggers at 87.5 % of `MAX_SEQUENCE`
     /// (i.e. with 12.5 % of the nonce space remaining) to leave headroom.
@@ -166,7 +239,6 @@ mod tests {
 
     fn symmetric_keys() -> SessionKeys {
         let key = [0xABu8; 32];
-        // For test symmetry, both sides use the same key as send/recv
         SessionKeys::new(key, key)
     }
 
@@ -212,7 +284,6 @@ mod tests {
         let mut sender = symmetric_keys();
         let receiver = symmetric_keys();
         let ct = sender.encrypt_packet(b"", b"test").unwrap();
-        // Use sequence=99 instead of 0
         assert_eq!(
             receiver.decrypt_packet(b"", 99, &ct).unwrap_err(),
             SessionError::AuthenticationFailed
@@ -283,7 +354,6 @@ mod tests {
     fn sk11_requires_rotation_threshold() {
         let mut keys = symmetric_keys();
         assert!(!keys.requires_rotation());
-        // Simulate a sequence just below the 87.5 % threshold.
         let threshold = (MAX_SEQUENCE / 8) * 7;
         keys.send_sequence = threshold - 1;
         assert!(!keys.requires_rotation());
@@ -308,7 +378,7 @@ mod tests {
     #[test]
     fn sk13_remaining_saturates_at_zero() {
         let mut keys = symmetric_keys();
-        keys.send_sequence = MAX_SEQUENCE + 1; // past limit
+        keys.send_sequence = MAX_SEQUENCE + 1;
         assert_eq!(keys.remaining_packets(), 0);
     }
 
@@ -348,16 +418,11 @@ mod tests {
     // SK16: after rotate_keys both sides can still encrypt/decrypt
     #[test]
     fn sk16_rotate_keys_decrypt_compatibility() {
-        // Use the same key for send and recv (symmetric test) so that sender's
-        // send_key matches receiver's recv_key after rotation.
         let new_key = [0xCCu8; 32];
-
         let mut sender = symmetric_keys();
         let mut receiver = symmetric_keys();
-
         sender.rotate_keys(new_key, new_key);
         receiver.rotate_keys(new_key, new_key);
-
         let ct = sender.encrypt_packet(b"aad", b"post-rotation").unwrap();
         let seq = sender.send_sequence() - 1;
         let plain = receiver.decrypt_packet(b"aad", seq, &ct).unwrap();
@@ -380,11 +445,8 @@ mod tests {
     fn ae2_replay_rejected_in_order() {
         let mut sender = symmetric_keys();
         let mut receiver = symmetric_keys();
-
         let ct = sender.encrypt_packet(b"", b"data").unwrap();
-        // First decrypt at seq=0 succeeds.
         receiver.decrypt_packet_in_order(b"", 0, &ct).unwrap();
-        // Replaying the same sequence is rejected.
         assert_eq!(
             receiver.decrypt_packet_in_order(b"", 0, &ct).unwrap_err(),
             SessionError::ReplayDetected
@@ -396,22 +458,99 @@ mod tests {
     fn ae3_out_of_order_rejected() {
         let mut sender = symmetric_keys();
         let mut receiver = symmetric_keys();
-
-        // Send three packets; decrypt the third first.
         let ct0 = sender.encrypt_packet(b"", b"p0").unwrap();
         let ct1 = sender.encrypt_packet(b"", b"p1").unwrap();
         let ct2 = sender.encrypt_packet(b"", b"p2").unwrap();
-
         receiver.decrypt_packet_in_order(b"", 2, &ct2).unwrap();
-        // seq=1 is now below the last accepted (2) → rejected.
         assert_eq!(
             receiver.decrypt_packet_in_order(b"", 1, &ct1).unwrap_err(),
             SessionError::ReplayDetected
         );
-        // seq=0 also rejected.
         assert_eq!(
             receiver.decrypt_packet_in_order(b"", 0, &ct0).unwrap_err(),
             SessionError::ReplayDetected
         );
+    }
+
+    // DW1: decrypt_packet_with_window — roundtrip succeeds
+    #[test]
+    fn dw1_window_roundtrip() {
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+        let ct = sender.encrypt_packet(b"w", b"hello").unwrap();
+        let plain = receiver.decrypt_packet_with_window(b"w", 0, &ct).unwrap();
+        assert_eq!(&plain, b"hello");
+    }
+
+    // DW2: decrypt_packet_with_window — duplicate sequence rejected
+    #[test]
+    fn dw2_window_replay_rejected() {
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+        let ct = sender.encrypt_packet(b"", b"data").unwrap();
+        receiver.decrypt_packet_with_window(b"", 0, &ct).unwrap();
+        assert_eq!(
+            receiver
+                .decrypt_packet_with_window(b"", 0, &ct)
+                .unwrap_err(),
+            SessionError::ReplayDetected
+        );
+    }
+
+    // DW3: decrypt_packet_with_window — out-of-order within window accepted
+    #[test]
+    fn dw3_window_out_of_order_accepted() {
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+        // Send 3 packets in order, receive out-of-order.
+        let ct0 = sender.encrypt_packet(b"", b"p0").unwrap();
+        let ct1 = sender.encrypt_packet(b"", b"p1").unwrap();
+        let ct2 = sender.encrypt_packet(b"", b"p2").unwrap();
+        // Receive 2 first, then 0 and 1 (out-of-order but within window).
+        receiver.decrypt_packet_with_window(b"", 2, &ct2).unwrap();
+        receiver.decrypt_packet_with_window(b"", 0, &ct0).unwrap();
+        receiver.decrypt_packet_with_window(b"", 1, &ct1).unwrap();
+    }
+
+    // SL1: initial state is Active
+    #[test]
+    fn sl1_initial_state_active() {
+        let keys = symmetric_keys();
+        assert_eq!(keys.state(), SessionState::Active);
+        assert!(keys.is_usable());
+    }
+
+    // SL2: state transitions Active → Rekeying → Expired
+    #[test]
+    fn sl2_state_transitions() {
+        let mut keys = symmetric_keys();
+        keys.begin_rekey();
+        assert_eq!(keys.state(), SessionState::Rekeying);
+        assert!(keys.is_usable());
+        keys.expire();
+        assert_eq!(keys.state(), SessionState::Expired);
+        assert!(!keys.is_usable());
+    }
+
+    // SL3: complete_rekey installs new keys and restores Active state
+    #[test]
+    fn sl3_complete_rekey_restores_active() {
+        let new_key = [0xDDu8; 32];
+        let mut sender = symmetric_keys();
+        let mut receiver = symmetric_keys();
+
+        sender.begin_rekey();
+        assert_eq!(sender.state(), SessionState::Rekeying);
+
+        sender.complete_rekey(new_key, new_key);
+        receiver.complete_rekey(new_key, new_key);
+
+        assert_eq!(sender.state(), SessionState::Active);
+        assert_eq!(sender.send_sequence(), 0);
+
+        // Keys work after rekey.
+        let ct = sender.encrypt_packet(b"sl3", b"post-rekey").unwrap();
+        let plain = receiver.decrypt_packet(b"sl3", 0, &ct).unwrap();
+        assert_eq!(&plain, b"post-rekey");
     }
 }
