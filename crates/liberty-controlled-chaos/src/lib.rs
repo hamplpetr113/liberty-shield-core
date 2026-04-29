@@ -9,8 +9,10 @@ pub mod correlation_score_engine;
 pub mod cover_traffic;
 pub mod crypto;
 pub mod directory_authority;
+pub mod directory_client;
 pub mod encrypted_relay;
 pub mod guard_selection;
+pub mod link_handshake;
 pub mod mesh_router;
 pub mod multi_circuit_distributor;
 pub mod node_descriptor;
@@ -25,6 +27,7 @@ pub mod path_fragmenter;
 pub mod path_selection;
 pub mod proto;
 pub mod resource_guard;
+pub mod testnet;
 
 pub mod mesh_simulator;
 pub mod protocol_runtime;

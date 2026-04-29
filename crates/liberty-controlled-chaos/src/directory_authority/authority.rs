@@ -116,6 +116,7 @@ impl SignedNodeDescriptor {
 // ---------------------------------------------------------------------------
 
 /// A directory authority: a node that can sign descriptors and publish consensus.
+#[derive(Clone)]
 pub struct AuthorityIdentity {
     /// The authority's own long-term identity.
     pub identity: NodeIdentity,
