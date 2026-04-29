@@ -3,8 +3,9 @@
 //! `RelayPipeline` combines `EncryptedRelayCell` decryption with per-circuit
 //! replay detection.  It operates entirely in-process with no I/O.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crate::circuit_identity::{CircuitIdentity, CollisionError};
 use crate::crypto::SessionKeys;
 use crate::replay_protection::{CellNonce, ReplayDetector, ReplayError};
 use crate::security_state::SecurityStateStore;
@@ -43,6 +44,11 @@ pub struct RelayPipeline {
     transport_filters: HashMap<u64, TransportReplayFilter>,
     /// Optional persistent security state journal.
     security_state: Option<SecurityStateStore>,
+    /// Per-circuit cryptographic identities (optional; only present when
+    /// registered via `register_circuit_with_identity`).
+    circuit_identities: HashMap<u64, CircuitIdentity>,
+    /// Set of all known circuit hashes — used for collision detection.
+    circuit_hashes: HashSet<[u8; 32]>,
 }
 
 impl RelayPipeline {
@@ -54,6 +60,8 @@ impl RelayPipeline {
             replay: ReplayDetector::new(),
             transport_filters: HashMap::new(),
             security_state: None,
+            circuit_identities: HashMap::new(),
+            circuit_hashes: HashSet::new(),
         }
     }
 
@@ -65,6 +73,8 @@ impl RelayPipeline {
             replay: ReplayDetector::new(),
             transport_filters: HashMap::new(),
             security_state: Some(store),
+            circuit_identities: HashMap::new(),
+            circuit_hashes: HashSet::new(),
         }
     }
 
@@ -92,6 +102,39 @@ impl RelayPipeline {
         self.replay
             .remove_circuit(crate::circuit_builder::CircuitId(circuit_id));
         self.transport_filters.remove(&circuit_id);
+        if let Some(id) = self.circuit_identities.remove(&circuit_id) {
+            self.circuit_hashes.remove(&id.circuit_hash);
+        }
+    }
+
+    /// Register a circuit together with its cryptographic `CircuitIdentity`.
+    ///
+    /// Returns `Err(CollisionError)` if:
+    /// - a circuit with the same `circuit_id` is already registered, or
+    /// - a circuit with the same `circuit_hash` exists (nonce reuse).
+    pub fn register_circuit_with_identity(
+        &mut self,
+        circuit_id: u64,
+        send_session: SessionKeys,
+        recv_session: SessionKeys,
+        identity: CircuitIdentity,
+    ) -> Result<(), CollisionError> {
+        if self.circuit_identities.contains_key(&circuit_id) {
+            return Err(CollisionError::CircuitIdCollision(circuit_id));
+        }
+        if self.circuit_hashes.contains(&identity.circuit_hash) {
+            return Err(CollisionError::CircuitHashCollision(identity.circuit_hash));
+        }
+        let hash = identity.circuit_hash;
+        self.circuit_identities.insert(circuit_id, identity);
+        self.circuit_hashes.insert(hash);
+        self.register_circuit(circuit_id, send_session, recv_session);
+        Ok(())
+    }
+
+    /// Return the `CircuitIdentity` for a registered circuit, if any.
+    pub fn circuit_identity(&self, circuit_id: u64) -> Option<&CircuitIdentity> {
+        self.circuit_identities.get(&circuit_id)
     }
 
     /// Persist a processed rekey nonce to the security state journal.
@@ -302,5 +345,108 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&log_path);
+    }
+
+    // RP8: register_circuit_with_identity succeeds for a fresh circuit.
+    #[test]
+    fn rp8_circuit_identity_register_success() {
+        let mut p = RelayPipeline::new();
+        let id = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 1);
+        let cid = id.circuit_id;
+        let send = SessionKeys::new([0x33u8; 32], [0x33u8; 32]);
+        let recv = SessionKeys::new([0x33u8; 32], [0x33u8; 32]);
+        assert!(p.register_circuit_with_identity(cid, send, recv, id).is_ok());
+        assert!(p.circuit_identity(cid).is_some());
+    }
+
+    // RP9: register_circuit_with_identity rejects duplicate circuit_id.
+    #[test]
+    fn rp9_circuit_identity_id_collision() {
+        let mut p = RelayPipeline::new();
+        let id1 = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 1);
+        let cid = id1.circuit_id;
+        let send1 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
+        let recv1 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
+        p.register_circuit_with_identity(cid, send1, recv1, id1).unwrap();
+
+        // Second registration with the same circuit_id must fail.
+        let id2 = CircuitIdentity::generate(&[0xCCu8; 32], &[0xDDu8; 32], 2);
+        // Forge a duplicate circuit_id so the id-collision branch fires.
+        let id2_dup = CircuitIdentity { circuit_id: cid, circuit_hash: id2.circuit_hash };
+        let send2 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
+        let recv2 = SessionKeys::new([0x44u8; 32], [0x44u8; 32]);
+        assert_eq!(
+            p.register_circuit_with_identity(cid, send2, recv2, id2_dup),
+            Err(CollisionError::CircuitIdCollision(cid))
+        );
+    }
+
+    // RP10: register_circuit_with_identity rejects duplicate circuit_hash.
+    #[test]
+    fn rp10_circuit_identity_hash_collision() {
+        let mut p = RelayPipeline::new();
+        let id1 = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 42);
+        let hash = id1.circuit_hash;
+        let cid1 = id1.circuit_id;
+        let send1 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
+        let recv1 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
+        p.register_circuit_with_identity(cid1, send1, recv1, id1).unwrap();
+
+        // Different circuit_id but same hash (forced collision).
+        let id2 = CircuitIdentity { circuit_id: cid1.wrapping_add(1), circuit_hash: hash };
+        let send2 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
+        let recv2 = SessionKeys::new([0x55u8; 32], [0x55u8; 32]);
+        assert_eq!(
+            p.register_circuit_with_identity(cid1.wrapping_add(1), send2, recv2, id2),
+            Err(CollisionError::CircuitHashCollision(hash))
+        );
+    }
+
+    // RP11: remove_circuit clears identity state; re-registration with same identity succeeds.
+    #[test]
+    fn rp11_remove_circuit_clears_identity() {
+        let mut p = RelayPipeline::new();
+        let id = CircuitIdentity::generate(&[0x11u8; 32], &[0x22u8; 32], 5);
+        let cid = id.circuit_id;
+        let hash = id.circuit_hash;
+
+        let send = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
+        let recv = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
+        p.register_circuit_with_identity(cid, send, recv, id).unwrap();
+
+        p.remove_circuit(cid);
+        assert!(p.circuit_identity(cid).is_none());
+        assert!(!p.circuit_hashes.contains(&hash));
+
+        // Re-registration must succeed after removal.
+        let id2 = CircuitIdentity::generate(&[0x11u8; 32], &[0x22u8; 32], 5);
+        let send2 = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
+        let recv2 = SessionKeys::new([0x66u8; 32], [0x66u8; 32]);
+        assert!(p.register_circuit_with_identity(cid, send2, recv2, id2).is_ok());
+    }
+
+    // RP12: pipeline can send/receive after register_circuit_with_identity.
+    #[test]
+    fn rp12_pipeline_works_with_identity() {
+        let mut p = RelayPipeline::new();
+        let id = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 99);
+        let cid = id.circuit_id;
+        // Use circuit_id from the identity but keep stream_id = 2 to
+        // match data_cell's embedded header (circuit 1, stream 2).
+        // For this test use a separate pipeline with matching circuit 1.
+        let _ = cid; // suppress unused warning
+
+        // Simpler: just use circuit 1 as in other tests but register with identity.
+        let id = CircuitIdentity::generate(&[0xAAu8; 32], &[0xBBu8; 32], 0);
+        let pt = RelayCellPlaintext::new(
+            id.circuit_id, 2, RelayCellCommand::Data, 0, b"hello".to_vec()
+        );
+        let cid = id.circuit_id;
+        let send = SessionKeys::new([0x77u8; 32], [0x77u8; 32]);
+        let recv = SessionKeys::new([0x77u8; 32], [0x77u8; 32]);
+        p.register_circuit_with_identity(cid, send, recv, id).unwrap();
+
+        let enc = p.send_cell(cid, 2, pt.clone()).unwrap();
+        assert!(matches!(p.receive_cell(cid, 2, &enc), PipelineResult::Accepted(_)));
     }
 }

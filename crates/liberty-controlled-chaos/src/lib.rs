@@ -2,6 +2,7 @@ pub mod anti_correlation_scheduler;
 pub mod cell_encoder;
 pub mod circuit_builder;
 pub mod circuit_extension;
+pub mod circuit_identity;
 pub mod circuit_rotation;
 pub mod circuit_runtime;
 pub mod correlation_score_engine;
