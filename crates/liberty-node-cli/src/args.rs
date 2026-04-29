@@ -23,6 +23,50 @@ pub enum Command {
         profile: String,
         rounds: usize,
     },
+    UdpTestnetStart {
+        nodes: usize,
+        base_port: u16,
+    },
+    UdpTestnetProbe {
+        nodes: usize,
+        base_port: u16,
+    },
+    UdpTestnetData {
+        nodes: usize,
+        base_port: u16,
+        payload: String,
+    },
+    UdpTestnetStatus {
+        nodes: usize,
+        base_port: u16,
+    },
+    UdpTestnetBench {
+        nodes: usize,
+        base_port: u16,
+        rounds: usize,
+    },
+    EncryptedUdpStart {
+        nodes: usize,
+        base_port: u16,
+    },
+    EncryptedUdpProbe {
+        nodes: usize,
+        base_port: u16,
+    },
+    EncryptedUdpSend {
+        nodes: usize,
+        base_port: u16,
+        payload: String,
+    },
+    EncryptedUdpStatus {
+        nodes: usize,
+        base_port: u16,
+    },
+    EncryptedUdpBench {
+        nodes: usize,
+        base_port: u16,
+        rounds: usize,
+    },
     Run {
         node_count: usize,
         circuits: usize,
@@ -86,6 +130,90 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 rounds: extract_usize(&args[1..], "--rounds").unwrap_or(1000),
             },
         }),
+        "udp-testnet-start" => Ok(CliArgs {
+            command: Command::UdpTestnetStart {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(41000),
+            },
+        }),
+        "udp-testnet-probe" => Ok(CliArgs {
+            command: Command::UdpTestnetProbe {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(41000),
+            },
+        }),
+        "udp-testnet-data" => Ok(CliArgs {
+            command: Command::UdpTestnetData {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(41000),
+                payload: extract_string(&args[1..], "--payload").unwrap_or_default(),
+            },
+        }),
+        "udp-testnet-status" => Ok(CliArgs {
+            command: Command::UdpTestnetStatus {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(41000),
+            },
+        }),
+        "udp-testnet-bench" => Ok(CliArgs {
+            command: Command::UdpTestnetBench {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(5),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(41100),
+                rounds: extract_usize(&args[1..], "--rounds").unwrap_or(100),
+            },
+        }),
+        "encrypted-udp-start" => Ok(CliArgs {
+            command: Command::EncryptedUdpStart {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(43000),
+            },
+        }),
+        "encrypted-udp-probe" => Ok(CliArgs {
+            command: Command::EncryptedUdpProbe {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(43000),
+            },
+        }),
+        "encrypted-udp-send" => Ok(CliArgs {
+            command: Command::EncryptedUdpSend {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(43000),
+                payload: extract_string(&args[1..], "--payload").unwrap_or_default(),
+            },
+        }),
+        "encrypted-udp-status" => Ok(CliArgs {
+            command: Command::EncryptedUdpStatus {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(3),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(43000),
+            },
+        }),
+        "encrypted-udp-bench" => Ok(CliArgs {
+            command: Command::EncryptedUdpBench {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(5),
+                base_port: extract_usize(&args[1..], "--base-port")
+                    .map(|p| p as u16)
+                    .unwrap_or(43100),
+                rounds: extract_usize(&args[1..], "--rounds").unwrap_or(100),
+            },
+        }),
         "run" => Ok(CliArgs {
             command: Command::Run {
                 node_count: extract_usize(&args[1..], "--node-count").unwrap_or(100),
@@ -106,11 +234,11 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             },
         }),
         "" => Err(
-            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|run|topology|bench>"
+            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|run|topology|bench>"
                 .to_string(),
         ),
         other => Err(format!(
-            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|run|topology|bench>"
+            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|run|topology|bench>"
         )),
     }
 }

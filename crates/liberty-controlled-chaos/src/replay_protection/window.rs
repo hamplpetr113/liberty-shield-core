@@ -6,6 +6,7 @@ use super::types::{CellNonce, ReplayError};
 /// - Nonces already in `seen_nonces` are rejected as duplicates.
 /// - New nonces within the window are recorded; the window advances with
 ///   `last_nonce`.
+#[derive(Debug)]
 pub struct ReplayWindow {
     /// Highest nonce accepted so far (0 when nothing has been seen).
     pub last_nonce: u64,

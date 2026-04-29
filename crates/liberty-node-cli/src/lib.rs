@@ -6,24 +6,42 @@ pub mod cluster_peering;
 pub mod cluster_topology;
 pub mod cluster_types;
 pub mod config;
+pub mod encrypted_cell_fixture;
+pub mod encrypted_peer_session;
+pub mod encrypted_udp_cluster;
+pub mod encrypted_udp_node;
+pub mod encrypted_udp_packet;
+pub mod encrypted_udp_socket;
+pub mod encrypted_udp_types;
 pub mod identity;
 pub mod node_runtime;
 pub mod node_service;
 pub mod output;
 pub mod peer_table;
 pub mod runtime_state;
+pub mod udp_loopback_socket;
+pub mod udp_testnet_cluster;
+pub mod udp_testnet_node;
+pub mod udp_testnet_packet;
+pub mod udp_testnet_types;
 
 use args::{Command, parse_args};
 use cluster_manager::LocalCluster;
 use cluster_topology::{build_cluster_configs, parse_profile};
 use config::NodeConfig;
+use encrypted_udp_cluster::EncryptedUdpCluster;
 use node_runtime::NodeRuntime;
 use node_service::NodeService;
 use output::{
     bench_json, cluster_bench_json, cluster_error_json, cluster_peers_json, cluster_run_json,
-    cluster_start_json, cluster_status_json, cluster_topology_json, metrics_json, peers_json,
-    service_error_json, start_json, status_json, topology_json,
+    cluster_start_json, cluster_status_json, cluster_topology_json, encrypted_udp_bench_json,
+    encrypted_udp_error_json, encrypted_udp_probe_json, encrypted_udp_send_json,
+    encrypted_udp_start_json, encrypted_udp_status_json, metrics_json, peers_json,
+    service_error_json, start_json, status_json, topology_json, udp_testnet_bench_json,
+    udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json, udp_testnet_start_json,
+    udp_testnet_status_json,
 };
+use udp_testnet_cluster::UdpTestnetCluster;
 
 pub fn run_cli(args: &[String]) -> String {
     match parse_args(args) {
@@ -155,6 +173,214 @@ fn execute(cmd: Command) -> String {
                 .map(|m| (m.packets_sent, m.packets_forwarded))
                 .unwrap_or((0, 0));
             cluster_bench_json(&profile, rounds, sent, forwarded, elapsed_us).to_string()
+        }
+
+        // ── UDP testnet commands ──────────────────────────────────────────────
+        Command::UdpTestnetStart { nodes, base_port } => {
+            if nodes == 0 {
+                return udp_testnet_error_json("nodes must be > 0").to_string();
+            }
+            match UdpTestnetCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(_) => udp_testnet_start_json(nodes, base_port).to_string(),
+                Err(e) => udp_testnet_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::UdpTestnetProbe { nodes, base_port } => {
+            if nodes == 0 {
+                return udp_testnet_error_json("nodes must be > 0").to_string();
+            }
+            let mut cluster = match UdpTestnetCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return udp_testnet_error_json(&format!("{e:?}")).to_string(),
+            };
+            if let Err(e) = cluster.send_probe_ring() {
+                return udp_testnet_error_json(&format!("{e:?}")).to_string();
+            }
+            let mut total_received: u64 = 0;
+            for _ in 0..200 {
+                total_received += cluster.poll_all() as u64;
+                if total_received >= nodes as u64 {
+                    break;
+                }
+            }
+            let total_sent: u64 = cluster.snapshots().iter().map(|s| s.packets_sent).sum();
+            udp_testnet_probe_json(nodes, total_sent, total_received).to_string()
+        }
+        Command::UdpTestnetData {
+            nodes,
+            base_port,
+            payload,
+        } => {
+            if nodes == 0 {
+                return udp_testnet_error_json("nodes must be > 0").to_string();
+            }
+            let payload_bytes = payload.as_bytes();
+            let payload_len = payload_bytes.len();
+            let mut cluster = match UdpTestnetCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return udp_testnet_error_json(&format!("{e:?}")).to_string(),
+            };
+            if let Err(e) = cluster.send_data_round(payload_bytes) {
+                return udp_testnet_error_json(&format!("{e:?}")).to_string();
+            }
+            let mut total_received: u64 = 0;
+            for _ in 0..200 {
+                total_received += cluster.poll_all() as u64;
+                if total_received >= nodes as u64 {
+                    break;
+                }
+            }
+            let total_sent: u64 = cluster.snapshots().iter().map(|s| s.packets_sent).sum();
+            udp_testnet_data_json(nodes, payload_len, total_sent, total_received).to_string()
+        }
+        Command::UdpTestnetStatus { nodes, base_port } => {
+            if nodes == 0 {
+                return udp_testnet_error_json("nodes must be > 0").to_string();
+            }
+            match UdpTestnetCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(cluster) => {
+                    let snaps = cluster.snapshots();
+                    udp_testnet_status_json(nodes, &snaps).to_string()
+                }
+                Err(e) => udp_testnet_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::UdpTestnetBench {
+            nodes,
+            base_port,
+            rounds,
+        } => {
+            if nodes == 0 {
+                return udp_testnet_error_json("nodes must be > 0").to_string();
+            }
+            let mut cluster = match UdpTestnetCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return udp_testnet_error_json(&format!("{e:?}")).to_string(),
+            };
+            let t0 = std::time::Instant::now();
+            let mut total_sent: u64 = 0;
+            let mut total_received: u64 = 0;
+            for _ in 0..rounds {
+                if cluster.send_probe_ring().is_err() {
+                    break;
+                }
+                total_sent += nodes as u64;
+                total_received += cluster.poll_all() as u64;
+            }
+            let elapsed_us = t0.elapsed().as_micros() as u64;
+            udp_testnet_bench_json(nodes, rounds, total_sent, total_received, elapsed_us)
+                .to_string()
+        }
+
+        // ── Encrypted UDP commands ────────────────────────────────────────────
+        Command::EncryptedUdpStart { nodes, base_port } => {
+            if nodes == 0 {
+                return encrypted_udp_error_json("nodes must be > 0").to_string();
+            }
+            match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(_) => encrypted_udp_start_json(nodes, base_port).to_string(),
+                Err(e) => encrypted_udp_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::EncryptedUdpProbe { nodes, base_port } => {
+            if nodes == 0 {
+                return encrypted_udp_error_json("nodes must be > 0").to_string();
+            }
+            let mut cluster = match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return encrypted_udp_error_json(&format!("{e:?}")).to_string(),
+            };
+            cluster.wire_deterministic_sessions();
+            if cluster.send_encrypted_ring(&[0u8; 64]).is_err() {
+                return encrypted_udp_error_json("send failed").to_string();
+            }
+            let mut total_received: u64 = 0;
+            for _ in 0..200 {
+                total_received += cluster.poll_all() as u64;
+                if total_received >= nodes as u64 {
+                    break;
+                }
+            }
+            let total_sent: u64 = cluster.snapshots().iter().map(|s| s.packets_sent).sum();
+            encrypted_udp_probe_json(nodes, total_sent, total_received).to_string()
+        }
+        Command::EncryptedUdpSend {
+            nodes,
+            base_port,
+            payload,
+        } => {
+            if nodes == 0 {
+                return encrypted_udp_error_json("nodes must be > 0").to_string();
+            }
+            let payload_bytes = payload.as_bytes();
+            let payload_len = payload_bytes.len();
+            let mut cluster = match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return encrypted_udp_error_json(&format!("{e:?}")).to_string(),
+            };
+            cluster.wire_deterministic_sessions();
+            if cluster.send_encrypted_ring(payload_bytes).is_err() {
+                return encrypted_udp_error_json("send failed").to_string();
+            }
+            let mut total_received: u64 = 0;
+            for _ in 0..200 {
+                total_received += cluster.poll_all() as u64;
+                if total_received >= nodes as u64 {
+                    break;
+                }
+            }
+            let snaps = cluster.snapshots();
+            let total_sent: u64 = snaps.iter().map(|s| s.packets_sent).sum();
+            let cells_sent: u64 = snaps.iter().map(|s| s.encrypted_cells_sent).sum();
+            let cells_recv: u64 = snaps.iter().map(|s| s.encrypted_cells_received).sum();
+            encrypted_udp_send_json(
+                nodes,
+                payload_len,
+                total_sent,
+                total_received,
+                cells_sent,
+                cells_recv,
+            )
+            .to_string()
+        }
+        Command::EncryptedUdpStatus { nodes, base_port } => {
+            if nodes == 0 {
+                return encrypted_udp_error_json("nodes must be > 0").to_string();
+            }
+            match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(cluster) => {
+                    let snaps = cluster.snapshots();
+                    encrypted_udp_status_json(nodes, &snaps).to_string()
+                }
+                Err(e) => encrypted_udp_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::EncryptedUdpBench {
+            nodes,
+            base_port,
+            rounds,
+        } => {
+            if nodes == 0 {
+                return encrypted_udp_error_json("nodes must be > 0").to_string();
+            }
+            let mut cluster = match EncryptedUdpCluster::start_loopback_cluster(nodes, base_port) {
+                Ok(c) => c,
+                Err(e) => return encrypted_udp_error_json(&format!("{e:?}")).to_string(),
+            };
+            cluster.wire_deterministic_sessions();
+            let t0 = std::time::Instant::now();
+            let mut total_sent: u64 = 0;
+            let mut total_received: u64 = 0;
+            for _ in 0..rounds {
+                if cluster.send_encrypted_ring(&[0u8; 64]).is_err() {
+                    break;
+                }
+                total_sent += nodes as u64;
+                total_received += cluster.poll_all() as u64;
+            }
+            let elapsed_us = t0.elapsed().as_micros() as u64;
+            encrypted_udp_bench_json(nodes, rounds, total_sent, total_received, elapsed_us)
+                .to_string()
         }
 
         // ── Simulation commands ───────────────────────────────────────────────
@@ -716,5 +942,681 @@ mod tests {
         assert_eq!(m.packets_sent, 50);
         assert_eq!(m.packets_forwarded, 150);
         assert!(m.average_path_length() - 3.0 < f64::EPSILON);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 17 — CLI UDP testnet tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // CLI-UDP1: udp-testnet-start returns JSON with mode and state
+    #[test]
+    fn cli_udp1_start_command_json() {
+        let out = run_cli(&args("udp-testnet-start --nodes 3 --base-port 42400"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-start");
+        assert_eq!(v["mode"], "loopback-only");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["base_port"], 42400);
+        assert_eq!(v["state"], "started");
+    }
+
+    // CLI-UDP2: udp-testnet-probe sends and receives all probes
+    #[test]
+    fn cli_udp2_probe_command_json() {
+        let out = run_cli(&args("udp-testnet-probe --nodes 3 --base-port 42410"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-probe");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["packets_sent"], 3);
+        assert_eq!(v["packets_received"], 3);
+    }
+
+    // CLI-UDP3: udp-testnet-data sends and receives data
+    #[test]
+    fn cli_udp3_data_command_json() {
+        let out = run_cli(&args(
+            "udp-testnet-data --nodes 3 --base-port 42420 --payload hello",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-data");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["payload_len"], 5);
+        assert_eq!(v["packets_sent"], 3);
+        assert_eq!(v["packets_received"], 3);
+    }
+
+    // CLI-UDP4: udp-testnet-status returns snapshot array
+    #[test]
+    fn cli_udp4_status_command_json() {
+        let out = run_cli(&args("udp-testnet-status --nodes 3 --base-port 42430"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-status");
+        assert_eq!(v["nodes"], 3);
+        let snaps = v["snapshots"].as_array().unwrap();
+        assert_eq!(snaps.len(), 3);
+        assert!(snaps[0].get("node_id").is_some());
+        assert!(snaps[0].get("local_addr").is_some());
+        assert!(snaps[0].get("packets_sent").is_some());
+    }
+
+    // CLI-UDP5: zero node count returns error JSON
+    #[test]
+    fn cli_udp5_invalid_node_count_rejected() {
+        let out = run_cli(&args("udp-testnet-start --nodes 0 --base-port 42440"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // CLI-UDP6: old cluster commands still pass after UDP additions
+    #[test]
+    fn cli_udp6_old_cluster_commands_unaffected() {
+        let out = run_cli(&args("cluster-run --profile tiny --rounds 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "cluster-run");
+        assert_eq!(v["packets_sent"], 5);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 17 Phase 7 — Safety gate tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // SG1: public bind address rejected at config level
+    #[test]
+    fn sg1_public_bind_address_rejected() {
+        use crate::udp_testnet_types::{UdpTestnetError, UdpTestnetNodeConfig, UdpTestnetNodeId};
+        let cfg = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "0.0.0.0".to_string(),
+            bind_port: 41900,
+            allow_real_udp: true,
+            simulation_mode: false,
+            max_packet_size: 1482,
+        };
+        assert_eq!(cfg.validate(), Err(UdpTestnetError::PublicBindRejected));
+    }
+
+    // SG2: allow_real_udp=false rejected at config level
+    #[test]
+    fn sg2_allow_real_udp_false_rejected() {
+        use crate::udp_testnet_types::{UdpTestnetError, UdpTestnetNodeConfig, UdpTestnetNodeId};
+        let cfg = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 41901,
+            allow_real_udp: false,
+            simulation_mode: false,
+            max_packet_size: 1482,
+        };
+        assert_eq!(cfg.validate(), Err(UdpTestnetError::RealUdpDisabled));
+    }
+
+    // SG3: simulation_mode=true rejected at config level
+    #[test]
+    fn sg3_simulation_mode_true_rejected() {
+        use crate::udp_testnet_types::{UdpTestnetError, UdpTestnetNodeConfig, UdpTestnetNodeId};
+        let cfg = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 41902,
+            allow_real_udp: true,
+            simulation_mode: true,
+            max_packet_size: 1482,
+        };
+        assert_eq!(cfg.validate(), Err(UdpTestnetError::RealUdpDisabled));
+    }
+
+    // SG4: send_to rejects non-loopback target at socket level
+    #[test]
+    fn sg4_non_loopback_send_target_rejected() {
+        use crate::udp_loopback_socket::UdpLoopbackSocket;
+        use crate::udp_testnet_packet::UdpTestnetPacket;
+        use crate::udp_testnet_types::{
+            UdpTestnetError, UdpTestnetNodeConfig, UdpTestnetNodeId, UdpTestnetPacketKind,
+        };
+        let cfg = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 42500,
+            allow_real_udp: true,
+            simulation_mode: false,
+            max_packet_size: 1482,
+        };
+        let sock = UdpLoopbackSocket::bind(&cfg).unwrap();
+        let pkt = UdpTestnetPacket {
+            source_node: UdpTestnetNodeId(1),
+            target_node: UdpTestnetNodeId(99),
+            packet_kind: UdpTestnetPacketKind::Probe,
+            sequence_number: 0,
+            payload: Vec::new(),
+        };
+        let public_addr: std::net::SocketAddr = "8.8.8.8:9999".parse().unwrap();
+        assert_eq!(
+            sock.send_to(&pkt, public_addr).unwrap_err(),
+            UdpTestnetError::PublicBindRejected
+        );
+    }
+
+    // SG5: UDP testnet CLI commands never produce "0.0.0.0" in JSON output
+    #[test]
+    fn sg5_udp_commands_never_use_public_address() {
+        let cmds = [
+            "udp-testnet-start --nodes 3 --base-port 42510",
+            "udp-testnet-status --nodes 3 --base-port 42520",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            assert!(
+                !out.contains("0.0.0.0"),
+                "command `{cmd}` output contained 0.0.0.0: {out}"
+            );
+        }
+    }
+
+    // SG6: default NodeConfig is simulation-only (no real UDP)
+    #[test]
+    fn sg6_default_node_config_simulation_only() {
+        let cfg = NodeConfig::default();
+        assert!(cfg.simulation_mode);
+        assert!(!cfg.allow_real_udp);
+    }
+
+    // SG7: Sprint 16 dry-run cluster does not open UDP sockets (start_all succeeds without UDP)
+    #[test]
+    fn sg7_dry_run_cluster_no_udp_sockets() {
+        let mut cluster = LocalCluster::with_default_topology(5).unwrap();
+        // start_all() must succeed — it uses simulation mode, not UDP
+        cluster.start_all().unwrap();
+        assert!(cluster.is_running());
+        // Verify all configs have allow_real_udp=false
+        for cfg in cluster.node_configs() {
+            assert!(!cfg.allow_real_udp);
+        }
+    }
+
+    // SG8: UDP testnet requires explicit allow_real_udp=true config
+    #[test]
+    fn sg8_udp_testnet_requires_explicit_udp_config() {
+        use crate::udp_testnet_node::UdpTestnetNode;
+        use crate::udp_testnet_types::{UdpTestnetError, UdpTestnetNodeConfig, UdpTestnetNodeId};
+        // A config with allow_real_udp=false must be rejected
+        let cfg = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 41910,
+            allow_real_udp: false,
+            simulation_mode: true,
+            max_packet_size: 1482,
+        };
+        assert_eq!(
+            UdpTestnetNode::start(cfg).unwrap_err(),
+            UdpTestnetError::RealUdpDisabled
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Extension B — udp-testnet-bench command
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // EBench1: bench command returns timing and throughput JSON
+    #[test]
+    fn ebench1_udp_testnet_bench_json() {
+        let out = run_cli(&args(
+            "udp-testnet-bench --nodes 3 --base-port 42540 --rounds 10",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-bench");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["rounds"], 10);
+        assert_eq!(v["packets_sent"], 30);
+        assert_eq!(v["packets_received"], 30);
+        assert!(v.get("elapsed_us").is_some());
+        assert!(v.get("throughput_packets_per_sec").is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Extension C — payload size boundary tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // EPL1: empty payload (0 bytes) encodes and delivers
+    #[test]
+    fn epl1_empty_payload() {
+        use crate::udp_testnet_node::UdpTestnetNode;
+        use crate::udp_testnet_types::{UdpTestnetNodeConfig, UdpTestnetNodeId};
+        let cfg_a = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 42600,
+            allow_real_udp: true,
+            simulation_mode: false,
+            max_packet_size: 1482,
+        };
+        let cfg_b = UdpTestnetNodeConfig {
+            node_id: UdpTestnetNodeId(2),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 42601,
+            allow_real_udp: true,
+            simulation_mode: false,
+            max_packet_size: 1482,
+        };
+        let mut a = UdpTestnetNode::start(cfg_a).unwrap();
+        let mut b = UdpTestnetNode::start(cfg_b).unwrap();
+        let b_addr = b.snapshot().local_addr;
+        a.send_data(UdpTestnetNodeId(2), b_addr, vec![]).unwrap();
+        let pkt = b.poll_once().unwrap().unwrap();
+        assert!(pkt.payload.is_empty());
+    }
+
+    // EPL2: 1-byte payload encodes and delivers
+    #[test]
+    fn epl2_one_byte_payload() {
+        let out = run_cli(&args(
+            "udp-testnet-data --nodes 2 --base-port 42610 --payload x",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["payload_len"], 1);
+        assert_eq!(v["packets_received"], 2);
+    }
+
+    // EPL3: 1407-byte payload encodes and delivers (below ENCRYPTED_CELL_SIZE)
+    #[test]
+    fn epl3_1407_byte_payload() {
+        use crate::udp_testnet_packet::UdpTestnetPacket;
+        use crate::udp_testnet_packet::{PACKET_HEADER_SIZE, decode_packet, encode_packet};
+        use crate::udp_testnet_types::{UdpTestnetNodeId, UdpTestnetPacketKind};
+        let payload = vec![0xABu8; 1407];
+        let pkt = UdpTestnetPacket {
+            source_node: UdpTestnetNodeId(1),
+            target_node: UdpTestnetNodeId(2),
+            packet_kind: UdpTestnetPacketKind::Data,
+            sequence_number: 0,
+            payload: payload.clone(),
+        };
+        let encoded = encode_packet(&pkt);
+        assert_eq!(encoded.len(), PACKET_HEADER_SIZE + 1407);
+        let decoded = decode_packet(&encoded).unwrap();
+        assert_eq!(decoded.payload.len(), 1407);
+        assert_eq!(decoded.payload, payload);
+    }
+
+    // EPL4: 1482-byte payload (ENCRYPTED_CELL_SIZE) encodes and delivers
+    #[test]
+    fn epl4_1482_byte_payload() {
+        use crate::udp_testnet_packet::UdpTestnetPacket;
+        use crate::udp_testnet_packet::{PACKET_HEADER_SIZE, decode_packet, encode_packet};
+        use crate::udp_testnet_types::{UdpTestnetNodeId, UdpTestnetPacketKind};
+        let payload = vec![0xCCu8; 1482];
+        let pkt = UdpTestnetPacket {
+            source_node: UdpTestnetNodeId(1),
+            target_node: UdpTestnetNodeId(2),
+            packet_kind: UdpTestnetPacketKind::Data,
+            sequence_number: 0,
+            payload: payload.clone(),
+        };
+        let encoded = encode_packet(&pkt);
+        assert_eq!(encoded.len(), PACKET_HEADER_SIZE + 1482);
+        let decoded = decode_packet(&encoded).unwrap();
+        assert_eq!(decoded.payload.len(), 1482);
+        assert_eq!(decoded.payload, payload);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 18 — Phase 8 CLI tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // CLI-E1: encrypted-udp-start returns started JSON
+    #[test]
+    fn cli_e1_encrypted_udp_start_json() {
+        let out = run_cli(&args("encrypted-udp-start --nodes 3 --base-port 43100"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "encrypted-udp-start");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["base_port"], 43100);
+        assert_eq!(v["state"], "started");
+        assert_eq!(v["mode"], "loopback-only");
+    }
+
+    // CLI-E2: encrypted-udp-probe returns ring probe results
+    #[test]
+    fn cli_e2_encrypted_udp_probe_json() {
+        let out = run_cli(&args("encrypted-udp-probe --nodes 3 --base-port 43110"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "encrypted-udp-probe");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["packets_sent"], 3);
+        assert_eq!(v["packets_received"], 3);
+    }
+
+    // CLI-E3: encrypted-udp-send returns send + encrypted cell counters
+    #[test]
+    fn cli_e3_encrypted_udp_send_json() {
+        let out = run_cli(&args(
+            "encrypted-udp-send --nodes 3 --base-port 43120 --payload hello",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "encrypted-udp-send");
+        assert_eq!(v["payload_len"], 5);
+        assert_eq!(v["packets_sent"], 3);
+        assert_eq!(v["packets_received"], 3);
+        assert_eq!(v["encrypted_cells_sent"], 3);
+        assert_eq!(v["encrypted_cells_received"], 3);
+    }
+
+    // CLI-E4: encrypted-udp-status returns snapshot list
+    #[test]
+    fn cli_e4_encrypted_udp_status_json() {
+        let out = run_cli(&args("encrypted-udp-status --nodes 3 --base-port 43130"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "encrypted-udp-status");
+        assert_eq!(v["nodes"], 3);
+        let snaps = v["snapshots"].as_array().unwrap();
+        assert_eq!(snaps.len(), 3);
+    }
+
+    // CLI-E5: encrypted-udp-bench returns timing and throughput JSON
+    #[test]
+    fn cli_e5_encrypted_udp_bench_json() {
+        let out = run_cli(&args(
+            "encrypted-udp-bench --nodes 3 --base-port 43140 --rounds 5",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "encrypted-udp-bench");
+        assert_eq!(v["nodes"], 3);
+        assert_eq!(v["rounds"], 5);
+        assert_eq!(v["packets_sent"], 15);
+        assert_eq!(v["packets_received"], 15);
+        assert!(v.get("elapsed_us").is_some());
+        assert!(v.get("throughput_packets_per_sec").is_some());
+    }
+
+    // CLI-E6: invalid node count returns error JSON
+    #[test]
+    fn cli_e6_invalid_node_count_rejected() {
+        let out = run_cli(&args("encrypted-udp-start --nodes 0 --base-port 43150"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // CLI-E7: legacy udp-testnet commands still pass after Sprint 18 additions
+    #[test]
+    fn cli_e7_legacy_udp_testnet_commands_unaffected() {
+        let out = run_cli(&args("udp-testnet-start --nodes 3 --base-port 43160"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-start");
+        assert_eq!(v["nodes"], 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 18 — Phase 9 security gate tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // EG1: public bind address rejected at config level
+    #[test]
+    fn eg1_public_bind_address_rejected() {
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId,
+        };
+        let cfg = EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "0.0.0.0".to_string(),
+            bind_port: 43170,
+            allow_real_udp: true,
+            simulation_mode: false,
+        };
+        assert_eq!(cfg.validate(), Err(EncryptedUdpError::PublicBindRejected));
+    }
+
+    // EG2: non-loopback send target rejected at socket level
+    #[test]
+    fn eg2_non_loopback_send_target_rejected() {
+        use crate::encrypted_udp_packet::EncryptedUdpPacket;
+        use crate::encrypted_udp_socket::EncryptedUdpSocket;
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId, EncryptedUdpPacketKind,
+        };
+        let cfg = EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43171,
+            allow_real_udp: true,
+            simulation_mode: false,
+        };
+        let sock = EncryptedUdpSocket::bind(&cfg).unwrap();
+        let pkt = EncryptedUdpPacket {
+            source_node: EncryptedUdpNodeId(1),
+            target_node: EncryptedUdpNodeId(2),
+            packet_kind: EncryptedUdpPacketKind::Shutdown,
+            sequence_number: 0,
+            encrypted_cell_bytes: Vec::new(),
+        };
+        let non_loopback: std::net::SocketAddr = "8.8.8.8:12345".parse().unwrap();
+        assert_eq!(
+            sock.send_to(&pkt, non_loopback).unwrap_err(),
+            EncryptedUdpError::PublicBindRejected
+        );
+    }
+
+    // EG3: encrypted packet with wrong cell size rejected at codec level
+    #[test]
+    fn eg3_encrypted_packet_wrong_size_rejected() {
+        use crate::encrypted_udp_packet::{EncryptedUdpPacket, encode_encrypted_udp_packet};
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeId, EncryptedUdpPacketKind,
+        };
+        let pkt = EncryptedUdpPacket {
+            source_node: EncryptedUdpNodeId(1),
+            target_node: EncryptedUdpNodeId(2),
+            packet_kind: EncryptedUdpPacketKind::EncryptedCell,
+            sequence_number: 0,
+            encrypted_cell_bytes: vec![0u8; 500], // wrong size
+        };
+        assert_eq!(
+            encode_encrypted_udp_packet(&pkt).unwrap_err(),
+            EncryptedUdpError::InvalidEncryptedCellSize
+        );
+    }
+
+    // EG4: send_payload_encrypted without session returns SessionNotFound
+    #[test]
+    fn eg4_send_without_session_rejected() {
+        use crate::encrypted_udp_node::EncryptedUdpNode;
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId,
+        };
+        let mut node = EncryptedUdpNode::start(EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43172,
+            allow_real_udp: true,
+            simulation_mode: false,
+        })
+        .unwrap();
+        let dummy_addr: std::net::SocketAddr = "127.0.0.1:43173".parse().unwrap();
+        assert_eq!(
+            node.send_payload_encrypted(EncryptedUdpNodeId(2), dummy_addr, b"data")
+                .unwrap_err(),
+            EncryptedUdpError::SessionNotFound
+        );
+    }
+
+    // EG5: duplicate packet sequence (replay) rejected
+    #[test]
+    fn eg5_duplicate_packet_sequence_rejected() {
+        use crate::encrypted_cell_fixture::make_encrypted_cell;
+        use crate::encrypted_udp_node::EncryptedUdpNode;
+        use crate::encrypted_udp_packet::encrypted_cell_to_bytes;
+        use crate::encrypted_udp_types::{
+            EncryptedUdpError, EncryptedUdpNodeConfig, EncryptedUdpNodeId,
+        };
+        use liberty_controlled_chaos::noise_link::ENCRYPTED_CELL_SIZE;
+
+        let sender_cfg = EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43174,
+            allow_real_udp: true,
+            simulation_mode: false,
+        };
+        let receiver_cfg = EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(2),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43175,
+            allow_real_udp: true,
+            simulation_mode: false,
+        };
+        let mut sender = EncryptedUdpNode::start(sender_cfg).unwrap();
+        let mut receiver = EncryptedUdpNode::start(receiver_cfg).unwrap();
+        let r_addr = receiver.snapshot().local_addr;
+        sender
+            .add_peer_session(EncryptedUdpNodeId(2), 0xEEEE, 0xFFFF)
+            .unwrap();
+        receiver
+            .add_peer_session(EncryptedUdpNodeId(1), 0xFFFF, 0xEEEE)
+            .unwrap();
+
+        // Craft two packets with the same nonce (replay)
+        let enc = make_encrypted_cell(b"guard", 0xEEEE).unwrap();
+        let cell_bytes = encrypted_cell_to_bytes(&enc);
+        assert_eq!(cell_bytes.len(), ENCRYPTED_CELL_SIZE);
+
+        sender
+            .send_encrypted_cell(EncryptedUdpNodeId(2), r_addr, cell_bytes.clone())
+            .unwrap();
+        sender
+            .send_encrypted_cell(EncryptedUdpNodeId(2), r_addr, cell_bytes)
+            .unwrap();
+        receiver.poll_once().unwrap(); // first: ok
+        assert_eq!(
+            receiver.poll_once().unwrap_err(),
+            EncryptedUdpError::ReplayDetected
+        );
+    }
+
+    // EG6: default NodeConfig still has simulation_mode=true, allow_real_udp=false
+    #[test]
+    fn eg6_default_node_config_simulation_only() {
+        let cfg = NodeConfig::default();
+        assert!(
+            cfg.simulation_mode,
+            "default NodeConfig must be simulation-only"
+        );
+        assert!(
+            !cfg.allow_real_udp,
+            "default NodeConfig must not allow real UDP"
+        );
+    }
+
+    // EG7: Sprint 17 plaintext UDP testnet still works alongside encrypted testnet
+    #[test]
+    fn eg7_plaintext_udp_testnet_still_available() {
+        let out = run_cli(&args("udp-testnet-probe --nodes 3 --base-port 43176"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "udp-testnet-probe");
+        assert_eq!(v["packets_sent"], 3);
+        assert_eq!(v["packets_received"], 3);
+    }
+
+    // EG8: encrypted UDP commands never output "0.0.0.0"
+    #[test]
+    fn eg8_encrypted_udp_commands_never_use_public_address() {
+        let commands = [
+            "encrypted-udp-start --nodes 3 --base-port 43180",
+            "encrypted-udp-probe --nodes 3 --base-port 43190",
+            "encrypted-udp-status --nodes 3 --base-port 43200",
+        ];
+        for cmd in commands {
+            let out = run_cli(&args(cmd));
+            assert!(
+                !out.contains("0.0.0.0"),
+                "encrypted UDP command '{cmd}' must not output 0.0.0.0; got: {out}"
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 18 — Extension B: payload size boundary tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // EXT-B1: empty payload (0 bytes) encrypts and delivers
+    #[test]
+    fn ext_b1_empty_payload_encrypted() {
+        use crate::encrypted_udp_node::EncryptedUdpNode;
+        use crate::encrypted_udp_types::{EncryptedUdpNodeConfig, EncryptedUdpNodeId};
+        let mut node_a = EncryptedUdpNode::start(EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(1),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43210,
+            allow_real_udp: true,
+            simulation_mode: false,
+        })
+        .unwrap();
+        let mut node_b = EncryptedUdpNode::start(EncryptedUdpNodeConfig {
+            node_id: EncryptedUdpNodeId(2),
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 43211,
+            allow_real_udp: true,
+            simulation_mode: false,
+        })
+        .unwrap();
+        let b_addr = node_b.snapshot().local_addr;
+        node_a
+            .add_peer_session(EncryptedUdpNodeId(2), 0x1111, 0x2222)
+            .unwrap();
+        node_b
+            .add_peer_session(EncryptedUdpNodeId(1), 0x2222, 0x1111)
+            .unwrap();
+        node_a
+            .send_payload_encrypted(EncryptedUdpNodeId(2), b_addr, &[])
+            .unwrap();
+        let received = node_b.poll_once().unwrap().unwrap();
+        assert!(
+            received.is_empty(),
+            "empty payload must decode to empty bytes"
+        );
+    }
+
+    // EXT-B2: 1-byte payload via CLI
+    #[test]
+    fn ext_b2_one_byte_payload_cli() {
+        let out = run_cli(&args(
+            "encrypted-udp-send --nodes 2 --base-port 43220 --payload x",
+        ));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["payload_len"], 1);
+        assert_eq!(v["packets_received"], 2);
+    }
+
+    // EXT-B3: MAX_PAYLOAD-byte payload encodes and delivers via cluster
+    #[test]
+    fn ext_b3_max_payload_encrypted() {
+        use liberty_controlled_chaos::cell_encoder::MAX_PAYLOAD;
+        let mut cluster = EncryptedUdpCluster::start_loopback_cluster(2, 43230).unwrap();
+        cluster.wire_deterministic_sessions();
+        let payload = vec![0xABu8; MAX_PAYLOAD];
+        cluster.send_encrypted_ring(&payload).unwrap();
+        let received = cluster.poll_all();
+        assert_eq!(received, 2);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 18 — Extension C: stress test
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // EXT-C1: 5-node, 100-round encrypted ring — sent == received
+    #[test]
+    fn ext_c1_encrypted_stress_5_nodes_100_rounds() {
+        let mut cluster = EncryptedUdpCluster::start_loopback_cluster(5, 43240).unwrap();
+        cluster.wire_deterministic_sessions();
+        let mut total_sent: u64 = 0;
+        let mut total_received: u64 = 0;
+        for _ in 0..100 {
+            cluster.send_encrypted_ring(b"stress").unwrap();
+            total_sent += 5;
+            total_received += cluster.poll_all() as u64;
+        }
+        assert_eq!(total_sent, 500);
+        assert_eq!(
+            total_received, 500,
+            "all encrypted packets must be received"
+        );
     }
 }

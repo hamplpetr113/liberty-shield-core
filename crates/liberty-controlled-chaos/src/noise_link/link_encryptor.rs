@@ -146,6 +146,7 @@ fn ct_eq(a: &[u8; 16], b: &[u8; 16]) -> bool {
 ///
 /// `encode` uses `session.send_key` and the current session nonce (then increments it).
 /// `decode` uses `session.recv_key` and the nonce carried inside the `EncryptedCell`.
+#[derive(Debug)]
 pub struct NoiseLinkEncoder {
     session: NoiseSession,
 }

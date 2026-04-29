@@ -232,3 +232,179 @@ pub fn cluster_bench_json(
 pub fn cluster_error_json(msg: &str) -> Value {
     json!({ "error": msg })
 }
+
+// ── UDP testnet outputs ───────────────────────────────────────────────────────
+
+pub fn udp_testnet_start_json(nodes: usize, base_port: u16) -> Value {
+    json!({
+        "command": "udp-testnet-start",
+        "mode": "loopback-only",
+        "nodes": nodes,
+        "base_port": base_port,
+        "state": "started"
+    })
+}
+
+pub fn udp_testnet_probe_json(nodes: usize, packets_sent: u64, packets_received: u64) -> Value {
+    json!({
+        "command": "udp-testnet-probe",
+        "nodes": nodes,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received
+    })
+}
+
+pub fn udp_testnet_data_json(
+    nodes: usize,
+    payload_len: usize,
+    packets_sent: u64,
+    packets_received: u64,
+) -> Value {
+    json!({
+        "command": "udp-testnet-data",
+        "nodes": nodes,
+        "payload_len": payload_len,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received
+    })
+}
+
+pub fn udp_testnet_status_json(
+    nodes: usize,
+    snaps: &[crate::udp_testnet_node::UdpTestnetNodeSnapshot],
+) -> Value {
+    let snapshot_list: Vec<Value> = snaps
+        .iter()
+        .map(|s| {
+            json!({
+                "node_id": s.node_id.0,
+                "local_addr": s.local_addr.to_string(),
+                "packets_sent": s.packets_sent,
+                "packets_received": s.packets_received,
+                "packets_dropped": s.packets_dropped,
+                "next_sequence": s.next_sequence
+            })
+        })
+        .collect();
+    json!({
+        "command": "udp-testnet-status",
+        "nodes": nodes,
+        "snapshots": snapshot_list
+    })
+}
+
+pub fn udp_testnet_bench_json(
+    nodes: usize,
+    rounds: usize,
+    packets_sent: u64,
+    packets_received: u64,
+    elapsed_us: u64,
+) -> Value {
+    let throughput = (packets_sent * 1_000_000)
+        .checked_div(elapsed_us)
+        .unwrap_or(0);
+    json!({
+        "command": "udp-testnet-bench",
+        "nodes": nodes,
+        "rounds": rounds,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received,
+        "elapsed_us": elapsed_us,
+        "throughput_packets_per_sec": throughput
+    })
+}
+
+pub fn udp_testnet_error_json(msg: &str) -> Value {
+    json!({ "error": msg })
+}
+
+// ── Encrypted UDP outputs ─────────────────────────────────────────────────────
+
+pub fn encrypted_udp_start_json(nodes: usize, base_port: u16) -> Value {
+    json!({
+        "command": "encrypted-udp-start",
+        "mode": "loopback-only",
+        "nodes": nodes,
+        "base_port": base_port,
+        "state": "started"
+    })
+}
+
+pub fn encrypted_udp_probe_json(nodes: usize, packets_sent: u64, packets_received: u64) -> Value {
+    json!({
+        "command": "encrypted-udp-probe",
+        "nodes": nodes,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received
+    })
+}
+
+pub fn encrypted_udp_send_json(
+    nodes: usize,
+    payload_len: usize,
+    packets_sent: u64,
+    packets_received: u64,
+    encrypted_cells_sent: u64,
+    encrypted_cells_received: u64,
+) -> Value {
+    json!({
+        "command": "encrypted-udp-send",
+        "nodes": nodes,
+        "payload_len": payload_len,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received,
+        "encrypted_cells_sent": encrypted_cells_sent,
+        "encrypted_cells_received": encrypted_cells_received
+    })
+}
+
+pub fn encrypted_udp_status_json(
+    nodes: usize,
+    snaps: &[crate::encrypted_udp_node::EncryptedUdpNodeSnapshot],
+) -> Value {
+    let snapshot_list: Vec<Value> = snaps
+        .iter()
+        .map(|s| {
+            json!({
+                "node_id": s.node_id.0,
+                "local_addr": s.local_addr.to_string(),
+                "peer_count": s.peer_count,
+                "packets_sent": s.packets_sent,
+                "packets_received": s.packets_received,
+                "packets_dropped": s.packets_dropped,
+                "encrypted_cells_sent": s.encrypted_cells_sent,
+                "encrypted_cells_received": s.encrypted_cells_received
+            })
+        })
+        .collect();
+    json!({
+        "command": "encrypted-udp-status",
+        "nodes": nodes,
+        "snapshots": snapshot_list
+    })
+}
+
+pub fn encrypted_udp_bench_json(
+    nodes: usize,
+    rounds: usize,
+    packets_sent: u64,
+    packets_received: u64,
+    elapsed_us: u64,
+) -> Value {
+    let throughput = (packets_sent * 1_000_000)
+        .checked_div(elapsed_us)
+        .unwrap_or(0);
+    json!({
+        "command": "encrypted-udp-bench",
+        "nodes": nodes,
+        "rounds": rounds,
+        "packets_sent": packets_sent,
+        "packets_received": packets_received,
+        "elapsed_us": elapsed_us,
+        "throughput_packets_per_sec": throughput
+    })
+}
+
+pub fn encrypted_udp_error_json(msg: &str) -> Value {
+    json!({ "error": msg })
+}

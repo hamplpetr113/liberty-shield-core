@@ -2,6 +2,7 @@
 ///
 /// `send_key` encrypts outbound cells; `recv_key` decrypts inbound cells.
 /// `nonce` is the monotonically-incrementing send-side counter.
+#[derive(Debug)]
 pub struct NoiseSession {
     pub send_key: [u8; 32],
     pub recv_key: [u8; 32],

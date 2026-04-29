@@ -19,6 +19,7 @@ impl NoiseNonce {
 ///
 /// Wire layout (1482 bytes):
 ///   path_id(8) | nonce(8) | ciphertext(1450) | auth_tag(16)
+#[derive(Debug)]
 pub struct EncryptedCell {
     pub path_id: u64,
     pub nonce: u64,
