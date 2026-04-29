@@ -12,6 +12,7 @@ pub mod encrypted_relay;
 pub mod guard_selection;
 pub mod mesh_router;
 pub mod multi_circuit_distributor;
+pub mod node_descriptor;
 pub mod node_discovery;
 pub mod node_identity;
 pub mod noise_link;
