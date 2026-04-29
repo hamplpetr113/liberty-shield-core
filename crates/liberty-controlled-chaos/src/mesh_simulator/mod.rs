@@ -11,6 +11,9 @@ mod packet_flow;
 mod simulator;
 mod topology;
 
+#[cfg(test)]
+mod large_scale_tests;
+
 pub use fixtures::{generate_circuits, generate_nodes, generate_payload};
 pub use metrics::MeshMetrics;
 pub use node_state::SimNodeState;
