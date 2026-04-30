@@ -14,7 +14,7 @@ mod types;
 
 pub use layer_decryptor::LayerDecryptor;
 pub use layer_encryptor::LayerEncryptor;
-pub use types::{OnionError, OnionLayerKey, OnionPacket, ONION_PACKET_SIZE};
+pub use types::{ONION_PACKET_SIZE, OnionError, OnionLayerKey, OnionPacket};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -26,9 +26,7 @@ mod tests {
     use super::*;
 
     fn make_key(seed: u8) -> OnionLayerKey {
-        OnionLayerKey {
-            bytes: [seed; 32],
-        }
+        OnionLayerKey { bytes: [seed; 32] }
     }
 
     fn make_cell(path_id: u64, nonce: u64) -> EncryptedCell {
@@ -106,7 +104,10 @@ mod tests {
         // payload is always ENCRYPTED_CELL_SIZE bytes
         assert_eq!(packet.payload.len(), crate::noise_link::ENCRYPTED_CELL_SIZE);
         // struct field layout matches ONION_PACKET_SIZE
-        assert_eq!(ONION_PACKET_SIZE, 1 + 8 + crate::noise_link::ENCRYPTED_CELL_SIZE + 16);
+        assert_eq!(
+            ONION_PACKET_SIZE,
+            1 + 8 + crate::noise_link::ENCRYPTED_CELL_SIZE + 16
+        );
     }
 
     // ── O5: peel on zero-layer packet returns NoLayersRemaining ──────────────

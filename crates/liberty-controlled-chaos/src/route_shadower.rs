@@ -442,13 +442,22 @@ mod tests {
         inputs.traffic_class = TrafficClass::Voip;
         inputs.threat_score = 0.50;
         let d = resolve_shadow_params(&inputs);
-        assert!(d.shadow_probability <= 0.05,
-            "shadow_probability {} > 0.05", d.shadow_probability);
+        assert!(
+            d.shadow_probability <= 0.05,
+            "shadow_probability {} > 0.05",
+            d.shadow_probability
+        );
         assert!(d.shadow_paths <= 1);
-        assert!(d.cover_flow_ratio <= 0.10,
-            "cover_flow_ratio {} > 0.10", d.cover_flow_ratio);
-        assert!(d.latency_guard_ms <= 40,
-            "latency_guard_ms {} > 40", d.latency_guard_ms);
+        assert!(
+            d.cover_flow_ratio <= 0.10,
+            "cover_flow_ratio {} > 0.10",
+            d.cover_flow_ratio
+        );
+        assert!(
+            d.latency_guard_ms <= 40,
+            "latency_guard_ms {} > 40",
+            d.latency_guard_ms
+        );
     }
 
     // ── Rule 6.3 ────────────────────────────────────────────────────────────
@@ -460,8 +469,12 @@ mod tests {
         inputs.charging_state = ChargingState::Discharging;
         let d = resolve_shadow_params(&inputs);
         let expected = NORMAL_SHADOW_PROBABILITY * 0.40;
-        assert!((d.shadow_probability - expected).abs() < 1e-6,
-            "shadow_probability {} != {}", d.shadow_probability, expected);
+        assert!(
+            (d.shadow_probability - expected).abs() < 1e-6,
+            "shadow_probability {} != {}",
+            d.shadow_probability,
+            expected
+        );
         assert!(d.shadow_paths <= 1);
     }
 
@@ -473,8 +486,12 @@ mod tests {
         inputs.charging_state = ChargingState::Charging;
         let d = resolve_shadow_params(&inputs);
         // Rule 6.3 skipped; probability should equal NORMAL default.
-        assert!((d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
-            "shadow_probability {} != {}", d.shadow_probability, NORMAL_SHADOW_PROBABILITY);
+        assert!(
+            (d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
+            "shadow_probability {} != {}",
+            d.shadow_probability,
+            NORMAL_SHADOW_PROBABILITY
+        );
     }
 
     // ── Rule 6.4 ────────────────────────────────────────────────────────────
@@ -487,13 +504,16 @@ mod tests {
         // cover_flow_ratio 0.90 with probability 0.70 → overhead 63 % < 100 %,
         // so it must NOT be reduced.
         let mut inputs = baseline_inputs();
-        inputs.threat_score = 0.80;  // → Paranoid base mode
+        inputs.threat_score = 0.80; // → Paranoid base mode
         inputs.charging_state = ChargingState::Charging;
         let d = resolve_shadow_params(&inputs);
         // Under Paranoid + charging the cover_flow_ratio should be unclamped.
-        assert!((d.cover_flow_ratio - PARANOID_COVER_FLOW_RATIO).abs() < 1e-6,
+        assert!(
+            (d.cover_flow_ratio - PARANOID_COVER_FLOW_RATIO).abs() < 1e-6,
             "cover_flow_ratio {} unexpectedly clamped (expected {})",
-            d.cover_flow_ratio, PARANOID_COVER_FLOW_RATIO);
+            d.cover_flow_ratio,
+            PARANOID_COVER_FLOW_RATIO
+        );
     }
 
     // ── Rule 6.5 ────────────────────────────────────────────────────────────
@@ -503,8 +523,12 @@ mod tests {
         let mut inputs = baseline_inputs();
         inputs.correlation_score = 0.65;
         let d = resolve_shadow_params(&inputs);
-        assert!(d.shadow_probability > NORMAL_SHADOW_PROBABILITY,
-            "probability {} not escalated above {}", d.shadow_probability, NORMAL_SHADOW_PROBABILITY);
+        assert!(
+            d.shadow_probability > NORMAL_SHADOW_PROBABILITY,
+            "probability {} not escalated above {}",
+            d.shadow_probability,
+            NORMAL_SHADOW_PROBABILITY
+        );
     }
 
     #[test]
@@ -512,10 +536,18 @@ mod tests {
         let mut inputs = baseline_inputs();
         inputs.correlation_score = 0.80;
         let d = resolve_shadow_params(&inputs);
-        assert!(d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
-            "probability {} below PARANOID floor {}", d.shadow_probability, PARANOID_SHADOW_PROBABILITY);
-        assert!(d.shadow_paths >= PARANOID_SHADOW_PATHS,
-            "paths {} below PARANOID floor {}", d.shadow_paths, PARANOID_SHADOW_PATHS);
+        assert!(
+            d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
+            "probability {} below PARANOID floor {}",
+            d.shadow_probability,
+            PARANOID_SHADOW_PROBABILITY
+        );
+        assert!(
+            d.shadow_paths >= PARANOID_SHADOW_PATHS,
+            "paths {} below PARANOID floor {}",
+            d.shadow_paths,
+            PARANOID_SHADOW_PATHS
+        );
     }
 
     #[test]
@@ -524,8 +556,11 @@ mod tests {
         let mut inputs = baseline_inputs();
         inputs.correlation_score = 0.50;
         let d = resolve_shadow_params(&inputs);
-        assert!((d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
-            "probability {} unexpectedly escalated", d.shadow_probability);
+        assert!(
+            (d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
+            "probability {} unexpectedly escalated",
+            d.shadow_probability
+        );
     }
 
     // ── Rule 6.6 ────────────────────────────────────────────────────────────
@@ -556,12 +591,15 @@ mod tests {
         // After escalation: probability → 0.85 (capped), ratio → 0.90.
         // Expected overhead = 0.85 * 0.90 = 76.5 % > 45 % → must be clamped.
         let mut inputs = baseline_inputs();
-        inputs.threat_score = 0.80;      // → Paranoid base
+        inputs.threat_score = 0.80; // → Paranoid base
         inputs.correlation_score = 0.60; // escalates probability
         let d = resolve_shadow_params(&inputs);
         let actual_overhead = d.shadow_probability * d.cover_flow_ratio;
-        assert!(actual_overhead <= 0.45 + 1e-6,
-            "overhead {} exceeded 45 % limit", actual_overhead);
+        assert!(
+            actual_overhead <= 0.45 + 1e-6,
+            "overhead {} exceeded 45 % limit",
+            actual_overhead
+        );
     }
 
     #[test]
@@ -581,8 +619,12 @@ mod tests {
         let inputs = baseline_inputs();
         let d = resolve_shadow_params(&inputs);
         let expected = d.shadow_probability * d.cover_flow_ratio;
-        assert!((d.bandwidth_budget - expected).abs() < 1e-6,
-            "bandwidth_budget {} != prob*ratio {}", d.bandwidth_budget, expected);
+        assert!(
+            (d.bandwidth_budget - expected).abs() < 1e-6,
+            "bandwidth_budget {} != prob*ratio {}",
+            d.bandwidth_budget,
+            expected
+        );
     }
 
     // ── Base mode selection ─────────────────────────────────────────────────
@@ -592,8 +634,11 @@ mod tests {
         let mut inputs = baseline_inputs();
         inputs.network_reputation = NetworkReputation::Hostile;
         let d = resolve_shadow_params(&inputs);
-        assert!(d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
-            "probability {} below PARANOID for hostile network", d.shadow_probability);
+        assert!(
+            d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
+            "probability {} below PARANOID for hostile network",
+            d.shadow_probability
+        );
     }
 
     #[test]
@@ -601,16 +646,23 @@ mod tests {
         let mut inputs = baseline_inputs();
         inputs.threat_score = 0.80;
         let d = resolve_shadow_params(&inputs);
-        assert!(d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
-            "probability {} below PARANOID for threat 0.80", d.shadow_probability);
+        assert!(
+            d.shadow_probability >= PARANOID_SHADOW_PROBABILITY,
+            "probability {} below PARANOID for threat 0.80",
+            d.shadow_probability
+        );
     }
 
     #[test]
     fn base_mode_normal_defaults() {
         let inputs = baseline_inputs();
         let d = resolve_shadow_params(&inputs);
-        assert!((d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
-            "probability {} != NORMAL default {}", d.shadow_probability, NORMAL_SHADOW_PROBABILITY);
+        assert!(
+            (d.shadow_probability - NORMAL_SHADOW_PROBABILITY).abs() < 1e-6,
+            "probability {} != NORMAL default {}",
+            d.shadow_probability,
+            NORMAL_SHADOW_PROBABILITY
+        );
         assert_eq!(d.shadow_paths, NORMAL_SHADOW_PATHS);
         assert!((d.cover_flow_ratio - NORMAL_COVER_FLOW_RATIO).abs() < 1e-6);
         assert_eq!(d.latency_guard_ms, NORMAL_LATENCY_MS);

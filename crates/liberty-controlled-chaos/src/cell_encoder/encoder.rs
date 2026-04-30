@@ -8,7 +8,7 @@
 //!
 //! `CellEncoder` does not encrypt, does not open sockets, and contains no unsafe.
 
-use super::types::{Cell, CellEncoderError, CELL_SIZE, CELL_VERSION, HEADER_SIZE, MAX_PAYLOAD};
+use super::types::{CELL_SIZE, CELL_VERSION, Cell, CellEncoderError, HEADER_SIZE, MAX_PAYLOAD};
 use crate::stream_mux::{StreamFrame, StreamFrameKind};
 use crate::transmitter::shadow_sync::ChaCha8Rng;
 
@@ -117,11 +117,8 @@ mod tests {
     ) -> StreamFrame {
         let mut paths = HashSet::new();
         paths.insert(1u64);
-        let v = RuntimeBoundaryValidator::new(
-            KillSwitchState::Inactive,
-            TunnelState::TunnelUp,
-            paths,
-        );
+        let v =
+            RuntimeBoundaryValidator::new(KillSwitchState::Inactive, TunnelState::TunnelUp, paths);
         let mut budget = ShadowBudgetTracker::new(1_000_000);
         let shadow_flag = class == PacketClass::Shadow;
         let out = ControlledChaosOutput {
@@ -198,10 +195,19 @@ mod tests {
         let hdr = cell.header();
 
         assert_eq!(hdr.version, CELL_VERSION);
-        assert_eq!(hdr.stream_id, expected_stream_id, "stream_id must be preserved");
-        assert_eq!(hdr.sequence_number, expected_seq, "sequence_number must be preserved");
+        assert_eq!(
+            hdr.stream_id, expected_stream_id,
+            "stream_id must be preserved"
+        );
+        assert_eq!(
+            hdr.sequence_number, expected_seq,
+            "sequence_number must be preserved"
+        );
         assert_eq!(hdr.path_id, expected_path, "path_id must be preserved");
-        assert_eq!(hdr.fragment_id, expected_frag, "fragment_id must be preserved");
+        assert_eq!(
+            hdr.fragment_id, expected_frag,
+            "fragment_id must be preserved"
+        );
         assert_eq!(hdr.payload_length, 100, "payload_length must match");
     }
 
@@ -219,7 +225,10 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(CellEncoderError::PayloadTooLarge { length: 1408, max: 1407 })
+                Err(CellEncoderError::PayloadTooLarge {
+                    length: 1408,
+                    max: 1407
+                })
             ),
             "expected PayloadTooLarge(1408, 1407), got {result:?}"
         );
@@ -245,7 +254,10 @@ mod tests {
         // Shadow frames exit StreamMux as Cover kind.
         let payload = vec![0u8; 64];
         let cell = enc.encode(frame, &payload).unwrap();
-        assert!(cell.header().is_cover(), "Cover frame must have flags & 0x01 set");
+        assert!(
+            cell.header().is_cover(),
+            "Cover frame must have flags & 0x01 set"
+        );
     }
 
     // ── no networking dependencies ────────────────────────────────────────────

@@ -135,5 +135,4 @@ impl StreamQueue {
         let heap = std::mem::take(&mut self.real_heap);
         heap.into_iter().collect()
     }
-
 }

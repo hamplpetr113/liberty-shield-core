@@ -1,4 +1,4 @@
-use crate::noise_link::{EncryptedCell, ENCRYPTED_CELL_SIZE};
+use crate::noise_link::{ENCRYPTED_CELL_SIZE, EncryptedCell};
 
 pub const ONION_PACKET_SIZE: usize = 1 + 8 + ENCRYPTED_CELL_SIZE + 16; // 1507
 
