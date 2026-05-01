@@ -34,12 +34,20 @@ impl LateralMovementDetector {
     }
 
     fn is_shell_like(&self, name: &str) -> bool {
-        self.shell_processes.iter().any(|s| name.eq_ignore_ascii_case(s))
+        self.shell_processes
+            .iter()
+            .any(|s| name.eq_ignore_ascii_case(s))
     }
 
     fn is_safe_destination(&self, ip: &str, port: u16) -> bool {
-        if self.safe_ports.contains(&port) { return true; }
-        if self.safe_ip_prefixes.iter().any(|p| ip.starts_with(p.as_str()) || ip == p.as_str()) {
+        if self.safe_ports.contains(&port) {
+            return true;
+        }
+        if self
+            .safe_ip_prefixes
+            .iter()
+            .any(|p| ip.starts_with(p.as_str()) || ip == p.as_str())
+        {
             return true;
         }
         if ip.split('.').next() == Some("172") {
@@ -55,7 +63,9 @@ impl LateralMovementDetector {
 }
 
 impl Detector for LateralMovementDetector {
-    fn name(&self) -> &str { "LateralMovementDetector" }
+    fn name(&self) -> &str {
+        "LateralMovementDetector"
+    }
 
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
         match event {
@@ -66,7 +76,10 @@ impl Detector for LateralMovementDetector {
                     names.retain(|_, (_, t)| now.saturating_duration_since(*t) < PID_TTL);
                     names.insert(*pid, (name.clone(), now));
                 }
-                self.alerted.lock().unwrap().retain(|_, t| now.saturating_duration_since(*t) < self.cooldown);
+                self.alerted
+                    .lock()
+                    .unwrap()
+                    .retain(|_, t| now.saturating_duration_since(*t) < self.cooldown);
                 None
             }
             SensorEvent::NetworkConnection { pid, .. } => {
@@ -82,7 +95,8 @@ impl Detector for LateralMovementDetector {
                     let graph = self.graph.lock().unwrap();
                     let children = graph.children_of(p);
                     let connections = graph.connections_of(p);
-                    let suspicious = connections.into_iter()
+                    let suspicious = connections
+                        .into_iter()
                         .filter(|(ip, port)| !self.is_safe_destination(ip, *port))
                         .collect::<Vec<_>>();
                     if children.is_empty() || suspicious.is_empty() {

@@ -24,8 +24,8 @@ pub fn monitor_connections(tx: mpsc::Sender<SensorEvent>) {
                 }
 
                 let remote = parts[2];
-                let state  = parts[3];
-                let pid    = parts[4].parse::<u32>().ok();
+                let state = parts[3];
+                let pid = parts[4].parse::<u32>().ok();
 
                 if state == "LISTENING" {
                     continue;

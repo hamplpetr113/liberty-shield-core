@@ -1,28 +1,31 @@
-mod config;
-mod gateway;
-mod pattern_matcher;
-mod attack_simulator;
 mod alert_sink;
-mod engine;
+mod attack_simulator;
 mod behavior_graph;
+mod config;
+mod engine;
+mod gateway;
 mod lateral_movement_detector;
-mod response_engine;
+mod logger;
 mod network_detector;
 mod network_sensor;
-mod logger;
+mod pattern_matcher;
 mod process_monitor;
-mod threat_detector;
+mod response_engine;
 mod self_protection;
+mod threat_detector;
 
-use std::sync::mpsc;
+use alert_sink::LoggerSink;
 use config::ShieldConfig;
 use engine::ShieldEngine;
-use threat_detector::ProcessThreatDetector;
-use network_detector::NetworkThreatDetector;
-use alert_sink::LoggerSink;
-use pattern_matcher::{MinerPattern, KeyloggerPattern, BotnetPattern};
 use lateral_movement_detector::LateralMovementDetector;
-use response_engine::{ResponseEngine, ProcessKillHandler, NetworkBlockHandler, EscalationHandler, PatternResponseHandler};
+use network_detector::NetworkThreatDetector;
+use pattern_matcher::{BotnetPattern, KeyloggerPattern, MinerPattern};
+use response_engine::{
+    EscalationHandler, NetworkBlockHandler, PatternResponseHandler, ProcessKillHandler,
+    ResponseEngine,
+};
+use std::sync::mpsc;
+use threat_detector::ProcessThreatDetector;
 
 #[tokio::main]
 async fn main() {

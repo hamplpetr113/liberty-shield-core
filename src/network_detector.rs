@@ -37,7 +37,11 @@ impl Detector for NetworkThreatDetector {
 
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
         let (remote_ip, remote_port) = match event {
-            SensorEvent::NetworkConnection { remote_ip, remote_port, .. } => (remote_ip, remote_port),
+            SensorEvent::NetworkConnection {
+                remote_ip,
+                remote_port,
+                ..
+            } => (remote_ip, remote_port),
             SensorEvent::ProcessStarted { .. } => return None,
         };
 
@@ -56,7 +60,10 @@ impl Detector for NetworkThreatDetector {
             return Some(ThreatAlert {
                 severity: Severity::Critical,
                 source: "NetworkThreatDetector".to_string(),
-                message: format!("[ALERT] connection to suspicious port {} ({})", remote_port, remote_ip),
+                message: format!(
+                    "[ALERT] connection to suspicious port {} ({})",
+                    remote_port, remote_ip
+                ),
                 score: self.suspicious_port_score,
             });
         }
@@ -65,7 +72,10 @@ impl Detector for NetworkThreatDetector {
             return Some(ThreatAlert {
                 severity: Severity::Warning,
                 source: "NetworkThreatDetector".to_string(),
-                message: format!("[ALERT] repeated connections from {} ({} in 60s)", remote_ip, ip_count),
+                message: format!(
+                    "[ALERT] repeated connections from {} ({} in 60s)",
+                    remote_ip, ip_count
+                ),
                 score: self.repeat_score,
             });
         }
@@ -74,7 +84,10 @@ impl Detector for NetworkThreatDetector {
             return Some(ThreatAlert {
                 severity: Severity::Info,
                 source: "NetworkThreatDetector".to_string(),
-                message: format!("[ALERT] high connection volume: {} connections in 60s", total),
+                message: format!(
+                    "[ALERT] high connection volume: {} connections in 60s",
+                    total
+                ),
                 score: 0,
             });
         }

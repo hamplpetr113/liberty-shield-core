@@ -87,103 +87,168 @@ impl ShieldConfig {
         };
         let pairs = parse_kv(&content);
         if let Some(v) = pairs.get("lateral_movement.shell_processes") {
-            let list: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            if !list.is_empty() { cfg.lateral_shell_processes = list; }
+            let list: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !list.is_empty() {
+                cfg.lateral_shell_processes = list;
+            }
         }
         if let Some(v) = pairs.get("lateral_movement.cooldown_secs") {
             if let Ok(n) = v.trim().parse::<u64>() {
-                if n > 0 { cfg.lateral_cooldown = Duration::from_secs(n); }
+                if n > 0 {
+                    cfg.lateral_cooldown = Duration::from_secs(n);
+                }
             }
         }
         if let Some(v) = pairs.get("allowlist.safe_ports") {
             let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            if !ports.is_empty() { cfg.safe_ports = ports; }
+            if !ports.is_empty() {
+                cfg.safe_ports = ports;
+            }
         }
         if let Some(v) = pairs.get("allowlist.safe_ip_prefixes") {
-            let prefixes: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            if !prefixes.is_empty() { cfg.safe_ip_prefixes = prefixes; }
+            let prefixes: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !prefixes.is_empty() {
+                cfg.safe_ip_prefixes = prefixes;
+            }
         }
         if let Some(v) = pairs.get("allowlist.safe_172_range") {
             let parts: Vec<&str> = v.splitn(2, '-').collect();
             if parts.len() == 2 {
-                if let (Ok(lo), Ok(hi)) = (parts[0].trim().parse::<u8>(), parts[1].trim().parse::<u8>()) {
+                if let (Ok(lo), Ok(hi)) =
+                    (parts[0].trim().parse::<u8>(), parts[1].trim().parse::<u8>())
+                {
                     cfg.safe_172_range = (lo, hi);
                 }
             }
         }
         if let Some(v) = pairs.get("pattern.miner_keywords") {
-            let list: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            if !list.is_empty() { cfg.pattern_miner_keywords = list; }
+            let list: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !list.is_empty() {
+                cfg.pattern_miner_keywords = list;
+            }
         }
         if let Some(v) = pairs.get("pattern.miner_ports") {
             let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            if !ports.is_empty() { cfg.pattern_miner_ports = ports; }
+            if !ports.is_empty() {
+                cfg.pattern_miner_ports = ports;
+            }
         }
         if let Some(v) = pairs.get("pattern.keylogger_keywords") {
-            let list: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            if !list.is_empty() { cfg.pattern_keylogger_keywords = list; }
+            let list: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !list.is_empty() {
+                cfg.pattern_keylogger_keywords = list;
+            }
         }
         if let Some(v) = pairs.get("pattern.botnet_ports") {
             let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            if !ports.is_empty() { cfg.pattern_botnet_ports = ports; }
+            if !ports.is_empty() {
+                cfg.pattern_botnet_ports = ports;
+            }
         }
         if let Some(v) = pairs.get("pattern.botnet_host_threshold") {
             if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 { cfg.pattern_botnet_host_threshold = n; }
+                if n > 0 {
+                    cfg.pattern_botnet_host_threshold = n;
+                }
             }
         }
         if let Some(v) = pairs.get("process.suspicious_names") {
-            let names: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            if !names.is_empty() { cfg.suspicious_process_names = names; }
+            let names: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !names.is_empty() {
+                cfg.suspicious_process_names = names;
+            }
         }
         if let Some(v) = pairs.get("process.suspicious_lineage") {
-            let parsed: Vec<(String, String)> = v.split(',')
+            let parsed: Vec<(String, String)> = v
+                .split(',')
                 .filter_map(|pair| {
                     let mut it = pair.trim().splitn(2, '>');
                     Some((it.next()?.trim().to_string(), it.next()?.trim().to_string()))
                 })
                 .filter(|(p, c)| !p.is_empty() && !c.is_empty())
                 .collect();
-            if !parsed.is_empty() { cfg.suspicious_lineage = parsed; }
+            if !parsed.is_empty() {
+                cfg.suspicious_lineage = parsed;
+            }
         }
         if let Some(v) = pairs.get("network.suspicious_ports") {
             let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-            if !ports.is_empty() { cfg.suspicious_ports = ports; }
+            if !ports.is_empty() {
+                cfg.suspicious_ports = ports;
+            }
         }
         if let Some(v) = pairs.get("engine.threat_score_threshold") {
             if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 { cfg.threat_score_threshold = n; }
+                if n > 0 {
+                    cfg.threat_score_threshold = n;
+                }
             }
         }
         if let Some(v) = pairs.get("process.suspicious_name_score") {
-            if let Ok(n) = v.trim().parse::<u32>() { cfg.process_suspicious_name_score = n; }
+            if let Ok(n) = v.trim().parse::<u32>() {
+                cfg.process_suspicious_name_score = n;
+            }
         }
         if let Some(v) = pairs.get("process.suspicious_lineage_score") {
-            if let Ok(n) = v.trim().parse::<u32>() { cfg.process_suspicious_lineage_score = n; }
+            if let Ok(n) = v.trim().parse::<u32>() {
+                cfg.process_suspicious_lineage_score = n;
+            }
         }
         if let Some(v) = pairs.get("network.suspicious_port_score") {
-            if let Ok(n) = v.trim().parse::<u32>() { cfg.network_suspicious_port_score = n; }
+            if let Ok(n) = v.trim().parse::<u32>() {
+                cfg.network_suspicious_port_score = n;
+            }
         }
         if let Some(v) = pairs.get("network.repeat_score") {
-            if let Ok(n) = v.trim().parse::<u32>() { cfg.network_repeat_score = n; }
+            if let Ok(n) = v.trim().parse::<u32>() {
+                cfg.network_repeat_score = n;
+            }
         }
         if let Some(v) = pairs.get("network.repeat_threshold") {
             if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 { cfg.network_repeat_threshold = n; }
+                if n > 0 {
+                    cfg.network_repeat_threshold = n;
+                }
             }
         }
         if let Some(v) = pairs.get("network.scan_threshold") {
             if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 { cfg.network_scan_threshold = n; }
+                if n > 0 {
+                    cfg.network_scan_threshold = n;
+                }
             }
         }
         if let Some(v) = pairs.get("engine.attack_window_secs") {
             if let Ok(n) = v.trim().parse::<u64>() {
-                if n > 0 { cfg.engine_attack_window_secs = n; }
+                if n > 0 {
+                    cfg.engine_attack_window_secs = n;
+                }
             }
         }
         if let Some(v) = pairs.get("pattern.match_score") {
-            if let Ok(n) = v.trim().parse::<u32>() { cfg.pattern_match_score = n; }
+            if let Ok(n) = v.trim().parse::<u32>() {
+                cfg.pattern_match_score = n;
+            }
         }
         cfg
     }
@@ -193,7 +258,9 @@ fn parse_kv(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         if let Some(pos) = line.find('=') {
             let key = line[..pos].trim().to_string();
             let val = line[pos + 1..].trim().to_string();

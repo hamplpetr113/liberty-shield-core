@@ -1,5 +1,5 @@
-use std::sync::mpsc;
 use crate::engine::SensorEvent;
+use std::sync::mpsc;
 
 pub fn simulate_suspicious_process(tx: &mpsc::Sender<SensorEvent>) {
     let _ = tx.send(SensorEvent::ProcessStarted {

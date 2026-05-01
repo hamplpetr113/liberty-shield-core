@@ -3,30 +3,19 @@ use std::time::{Duration, Instant};
 
 const PENDING_TTL: Duration = Duration::from_secs(30);
 
-
-
 pub enum GraphNode {
-
     Process { pid: u32, name: String },
 
     Network { remote_ip: String, remote_port: u16 },
-
 }
 
-
-
 pub enum GraphEdge {
-
     Spawned,
 
     ConnectedTo,
-
 }
 
-
-
 pub struct BehaviorGraph {
-
     nodes: Vec<GraphNode>,
 
     edges: Vec<(usize, usize, GraphEdge)>,
@@ -36,13 +25,9 @@ pub struct BehaviorGraph {
     pending: HashMap<u32, Vec<(usize, Instant)>>,
 
     ttl: Duration,
-
 }
 
-
-
 impl BehaviorGraph {
-
     pub fn new() -> Self {
         Self::with_ttl(PENDING_TTL)
     }
@@ -57,10 +42,7 @@ impl BehaviorGraph {
         }
     }
 
-
-
     pub fn add_process(&mut self, parent_pid: u32, pid: u32, name: String) {
-
         let child_idx = self.nodes.len();
 
         self.nodes.push(GraphNode::Process { pid, name });
@@ -68,27 +50,31 @@ impl BehaviorGraph {
         self.pid_index.insert(pid, child_idx);
 
         if let Some(&parent_idx) = self.pid_index.get(&parent_pid) {
-
             self.edges.push((parent_idx, child_idx, GraphEdge::Spawned));
-
         }
 
         if let Some(entries) = self.pending.remove(&pid) {
             let now = Instant::now();
             for (net_idx, inserted_at) in entries {
                 if now.saturating_duration_since(inserted_at) < self.ttl {
-                    self.edges.push((child_idx, net_idx, GraphEdge::ConnectedTo));
+                    self.edges
+                        .push((child_idx, net_idx, GraphEdge::ConnectedTo));
                 }
             }
         }
-
     }
 
-
-
-    pub fn add_network_connection(&mut self, remote_ip: String, remote_port: u16, pid: Option<u32>) {
+    pub fn add_network_connection(
+        &mut self,
+        remote_ip: String,
+        remote_port: u16,
+        pid: Option<u32>,
+    ) {
         let net_idx = self.nodes.len();
-        self.nodes.push(GraphNode::Network { remote_ip, remote_port });
+        self.nodes.push(GraphNode::Network {
+            remote_ip,
+            remote_port,
+        });
         if let Some(p) = pid {
             if let Some(&proc_idx) = self.pid_index.get(&p) {
                 self.edges.push((proc_idx, net_idx, GraphEdge::ConnectedTo));
@@ -103,33 +89,38 @@ impl BehaviorGraph {
         }
     }
 
-
-
     pub fn summarize_recent_activity(&self) -> String {
-
-        let process_count = self.nodes.iter()
-
+        let process_count = self
+            .nodes
+            .iter()
             .filter(|n| matches!(n, GraphNode::Process { .. }))
-
             .count();
 
-        let network_count = self.nodes.iter()
-
+        let network_count = self
+            .nodes
+            .iter()
             .filter(|n| matches!(n, GraphNode::Network { .. }))
-
             .count();
 
-        let spawned = self.edges.iter()
+        let spawned = self
+            .edges
+            .iter()
             .filter(|(_, _, e)| matches!(e, GraphEdge::Spawned))
             .count();
 
-        let connected_to = self.edges.iter()
+        let connected_to = self
+            .edges
+            .iter()
             .filter(|(_, _, e)| matches!(e, GraphEdge::ConnectedTo))
             .count();
 
         format!(
             "BehaviorGraph: {} processes, {} network connections, {} edges ({} spawned, {} connected_to)",
-            process_count, network_count, self.edges.len(), spawned, connected_to
+            process_count,
+            network_count,
+            self.edges.len(),
+            spawned,
+            connected_to
         )
     }
 
@@ -138,19 +129,28 @@ impl BehaviorGraph {
     }
 
     pub fn connections_of(&self, pid: u32) -> Vec<(String, u16)> {
-        let Some(&proc_idx) = self.pid_index.get(&pid) else { return Vec::new(); };
-        self.edges.iter()
+        let Some(&proc_idx) = self.pid_index.get(&pid) else {
+            return Vec::new();
+        };
+        self.edges
+            .iter()
             .filter(|(from, _, edge)| *from == proc_idx && matches!(edge, GraphEdge::ConnectedTo))
             .filter_map(|(_, to, _)| match &self.nodes[*to] {
-                GraphNode::Network { remote_ip, remote_port } => Some((remote_ip.clone(), *remote_port)),
+                GraphNode::Network {
+                    remote_ip,
+                    remote_port,
+                } => Some((remote_ip.clone(), *remote_port)),
                 _ => None,
             })
             .collect()
     }
 
     pub fn children_of(&self, pid: u32) -> Vec<u32> {
-        let Some(&proc_idx) = self.pid_index.get(&pid) else { return Vec::new(); };
-        self.edges.iter()
+        let Some(&proc_idx) = self.pid_index.get(&pid) else {
+            return Vec::new();
+        };
+        self.edges
+            .iter()
             .filter(|(from, _, edge)| *from == proc_idx && matches!(edge, GraphEdge::Spawned))
             .filter_map(|(_, to, _)| match &self.nodes[*to] {
                 GraphNode::Process { pid, .. } => Some(*pid),

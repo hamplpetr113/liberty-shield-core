@@ -1,12 +1,20 @@
 use crate::behavior_graph::BehaviorGraph;
 use crate::config::ShieldConfig;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub enum SensorEvent {
-    ProcessStarted { name: String, pid: u32, parent_pid: u32 },
-    NetworkConnection { remote_ip: String, remote_port: u16, pid: Option<u32> },
+    ProcessStarted {
+        name: String,
+        pid: u32,
+        parent_pid: u32,
+    },
+    NetworkConnection {
+        remote_ip: String,
+        remote_port: u16,
+        pid: Option<u32>,
+    },
 }
 
 pub enum Severity {
@@ -67,7 +75,10 @@ impl ShieldEngine {
         ShieldEngine {
             detectors: Vec::new(),
             sinks: Vec::new(),
-            score: Mutex::new(ThreatScore { score: 0, last_event: None }),
+            score: Mutex::new(ThreatScore {
+                score: 0,
+                last_event: None,
+            }),
             patterns: Vec::new(),
             graph: Arc::new(Mutex::new(BehaviorGraph::new())),
             threshold: cfg.threat_score_threshold,
@@ -94,11 +105,26 @@ impl ShieldEngine {
 
     pub fn handle(&self, event: SensorEvent) {
         match &event {
-            SensorEvent::ProcessStarted { name, pid, parent_pid } => {
-                self.graph.lock().unwrap().add_process(*parent_pid, *pid, name.clone());
+            SensorEvent::ProcessStarted {
+                name,
+                pid,
+                parent_pid,
+            } => {
+                self.graph
+                    .lock()
+                    .unwrap()
+                    .add_process(*parent_pid, *pid, name.clone());
             }
-            SensorEvent::NetworkConnection { remote_ip, remote_port, pid } => {
-                self.graph.lock().unwrap().add_network_connection(remote_ip.clone(), *remote_port, *pid);
+            SensorEvent::NetworkConnection {
+                remote_ip,
+                remote_port,
+                pid,
+            } => {
+                self.graph.lock().unwrap().add_network_connection(
+                    remote_ip.clone(),
+                    *remote_port,
+                    *pid,
+                );
             }
         }
         for detector in &self.detectors {
@@ -129,7 +155,10 @@ impl ShieldEngine {
                     let composite = ThreatAlert {
                         severity: Severity::Critical,
                         source: "ThreatScore".to_string(),
-                        message: format!("[ALERT] threat score {} exceeded threshold ({})", total, self.threshold),
+                        message: format!(
+                            "[ALERT] threat score {} exceeded threshold ({})",
+                            total, self.threshold
+                        ),
                         score: 0,
                     };
                     for sink in &self.sinks {
@@ -151,7 +180,10 @@ impl ShieldEngine {
                 }
                 let mut ts = self.score.lock().unwrap();
                 let now = Instant::now();
-                if ts.last_event.map_or(false, |t| now - t > self.attack_window) {
+                if ts
+                    .last_event
+                    .map_or(false, |t| now - t > self.attack_window)
+                {
                     ts.score = 0;
                 }
                 ts.score += self.pattern_match_score;

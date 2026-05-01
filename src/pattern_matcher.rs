@@ -8,7 +8,7 @@ const PATTERN_WINDOW: Duration = Duration::from_secs(60);
 
 struct MinerState {
     saw_miner: Option<Instant>,
-    saw_port:  Option<Instant>,
+    saw_port: Option<Instant>,
 }
 
 pub struct MinerPattern {
@@ -20,7 +20,10 @@ pub struct MinerPattern {
 impl MinerPattern {
     pub fn new(cfg: &ShieldConfig) -> Self {
         MinerPattern {
-            state: Mutex::new(MinerState { saw_miner: None, saw_port: None }),
+            state: Mutex::new(MinerState {
+                saw_miner: None,
+                saw_port: None,
+            }),
             keywords: cfg.pattern_miner_keywords.clone(),
             ports: cfg.pattern_miner_ports.clone(),
         }
@@ -28,14 +31,20 @@ impl MinerPattern {
 }
 
 impl AttackPattern for MinerPattern {
-    fn name(&self) -> &str { "MinerPattern" }
+    fn name(&self) -> &str {
+        "MinerPattern"
+    }
 
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let mut s = self.state.lock().unwrap();
         let now = Instant::now();
 
-        if s.saw_miner.map_or(false, |t| now - t > PATTERN_WINDOW) { s.saw_miner = None; }
-        if s.saw_port.map_or(false,  |t| now - t > PATTERN_WINDOW) { s.saw_port  = None; }
+        if s.saw_miner.map_or(false, |t| now - t > PATTERN_WINDOW) {
+            s.saw_miner = None;
+        }
+        if s.saw_port.map_or(false, |t| now - t > PATTERN_WINDOW) {
+            s.saw_port = None;
+        }
 
         match event {
             SensorEvent::ProcessStarted { name, .. } => {
@@ -52,10 +61,11 @@ impl AttackPattern for MinerPattern {
 
         if s.saw_miner.is_some() && s.saw_port.is_some() {
             s.saw_miner = None;
-            s.saw_port  = None;
+            s.saw_port = None;
             Some(PatternAlert {
                 pattern: "MinerPattern".to_string(),
-                message: "[PATTERN] MinerPattern: miner process + connection to mining port".to_string(),
+                message: "[PATTERN] MinerPattern: miner process + connection to mining port"
+                    .to_string(),
             })
         } else {
             None
@@ -82,7 +92,9 @@ impl KeyloggerPattern {
 }
 
 impl AttackPattern for KeyloggerPattern {
-    fn name(&self) -> &str { "KeyloggerPattern" }
+    fn name(&self) -> &str {
+        "KeyloggerPattern"
+    }
 
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let mut s = self.state.lock().unwrap();
@@ -136,11 +148,17 @@ impl BotnetPattern {
 }
 
 impl AttackPattern for BotnetPattern {
-    fn name(&self) -> &str { "BotnetPattern" }
+    fn name(&self) -> &str {
+        "BotnetPattern"
+    }
 
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let (remote_ip, remote_port) = match event {
-            SensorEvent::NetworkConnection { remote_ip, remote_port, .. } => (remote_ip, remote_port),
+            SensorEvent::NetworkConnection {
+                remote_ip,
+                remote_port,
+                ..
+            } => (remote_ip, remote_port),
             SensorEvent::ProcessStarted { .. } => return None,
         };
 
@@ -163,7 +181,8 @@ impl AttackPattern for BotnetPattern {
                 pattern: "BotnetPattern".to_string(),
                 message: format!(
                     "[PATTERN] BotnetPattern: C2 connections to {} hosts: {}",
-                    ips.len(), ips.join(", ")
+                    ips.len(),
+                    ips.join(", ")
                 ),
             });
         }

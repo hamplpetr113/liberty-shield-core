@@ -6,8 +6,8 @@ pub struct ShieldLock {
 }
 
 pub fn acquire_lock() -> Result<ShieldLock, String> {
-    let mut lock_path = std::env::current_dir()
-        .map_err(|e| format!("Cannot get current directory: {e}"))?;
+    let mut lock_path =
+        std::env::current_dir().map_err(|e| format!("Cannot get current directory: {e}"))?;
 
     lock_path.push("liberty-shield.lock");
 

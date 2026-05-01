@@ -13,7 +13,9 @@ pub struct ResponseEngine {
 
 impl ResponseEngine {
     pub fn new() -> Self {
-        ResponseEngine { handlers: Vec::new() }
+        ResponseEngine {
+            handlers: Vec::new(),
+        }
     }
 
     pub fn add_handler(&mut self, handler: Box<dyn ResponseHandler>) {
@@ -34,35 +36,47 @@ impl Sink for ResponseEngine {
 pub struct ProcessKillHandler;
 
 impl ResponseHandler for ProcessKillHandler {
-    fn name(&self) -> &str { "ProcessKillHandler" }
+    fn name(&self) -> &str {
+        "ProcessKillHandler"
+    }
 
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         matches!(alert.severity, Severity::Critical) && alert.source.contains("Process")
     }
 
     fn respond(&self, alert: &ThreatAlert) {
-        logger::log(&format!("[RESPONSE][ProcessKillHandler] Terminating threat: {}", alert.message));
+        logger::log(&format!(
+            "[RESPONSE][ProcessKillHandler] Terminating threat: {}",
+            alert.message
+        ));
     }
 }
 
 pub struct NetworkBlockHandler;
 
 impl ResponseHandler for NetworkBlockHandler {
-    fn name(&self) -> &str { "NetworkBlockHandler" }
+    fn name(&self) -> &str {
+        "NetworkBlockHandler"
+    }
 
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         matches!(alert.severity, Severity::Critical) && alert.source.contains("Network")
     }
 
     fn respond(&self, alert: &ThreatAlert) {
-        logger::log(&format!("[RESPONSE][NetworkBlockHandler] Blocking connection: {}", alert.message));
+        logger::log(&format!(
+            "[RESPONSE][NetworkBlockHandler] Blocking connection: {}",
+            alert.message
+        ));
     }
 }
 
 pub struct EscalationHandler;
 
 impl ResponseHandler for EscalationHandler {
-    fn name(&self) -> &str { "EscalationHandler" }
+    fn name(&self) -> &str {
+        "EscalationHandler"
+    }
 
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         alert.source == "ThreatScore"
@@ -79,7 +93,9 @@ impl ResponseHandler for EscalationHandler {
 pub struct PatternResponseHandler;
 
 impl ResponseHandler for PatternResponseHandler {
-    fn name(&self) -> &str { "PatternResponseHandler" }
+    fn name(&self) -> &str {
+        "PatternResponseHandler"
+    }
 
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         alert.message.contains("[PATTERN]")

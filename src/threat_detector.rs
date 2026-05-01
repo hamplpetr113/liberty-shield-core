@@ -31,7 +31,11 @@ impl Detector for ProcessThreatDetector {
 
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert> {
         match event {
-            SensorEvent::ProcessStarted { name, pid, parent_pid } => {
+            SensorEvent::ProcessStarted {
+                name,
+                pid,
+                parent_pid,
+            } => {
                 let mut map = self.pid_map.lock().unwrap();
                 let parent_name = map.get(parent_pid).cloned().unwrap_or_default();
                 map.insert(*pid, name.clone());
@@ -54,7 +58,11 @@ impl Detector for ProcessThreatDetector {
                     }
                 }
 
-                if self.suspicious_names.iter().any(|n| name.eq_ignore_ascii_case(n)) {
+                if self
+                    .suspicious_names
+                    .iter()
+                    .any(|n| name.eq_ignore_ascii_case(n))
+                {
                     Some(ThreatAlert {
                         severity: Severity::Critical,
                         source: self.name().to_string(),
@@ -69,4 +77,3 @@ impl Detector for ProcessThreatDetector {
         }
     }
 }
-
