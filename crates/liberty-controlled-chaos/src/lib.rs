@@ -164,3 +164,6 @@ pub mod security_invariants_v2;
 
 #[cfg(test)]
 pub mod node_runtime_tests;
+
+#[cfg(test)]
+pub mod real_udp_smoke_tests;
