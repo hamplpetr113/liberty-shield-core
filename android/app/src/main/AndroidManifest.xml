@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
                      tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE"
                      tools:ignore="ProtectedPermissions" />
@@ -26,7 +27,7 @@
             android:name=".vpn.ShieldVpnService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice"
+            android:foregroundServiceType="dataSync"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
@@ -47,6 +48,18 @@
             android:name=".VpnPermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- TEST MODE: two-phone harness — not for production -->
+        <activity
+            android:name=".test.TestModeActivity"
+            android:exported="true"
+            android:label="[TEST] Liberty Shield" />
+
+        <service
+            android:name=".test.TestModeService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

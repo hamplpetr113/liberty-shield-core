@@ -6,13 +6,14 @@ plugins {
 android {
     namespace = "com.libertyshield.agent"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
     defaultConfig {
         applicationId = "com.libertyshield.agent"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
-        buildConfigField("String", "GATEWAY_URL", "\"http://10.0.2.2:8080/sensor/event\"")
+        buildConfigField("String", "GATEWAY_URL", "\"http://192.168.68.107:8080/sensor/event\"")
     }
     buildFeatures {
         buildConfig = true
@@ -22,6 +23,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
     kotlinOptions { jvmTarget = "1.8" }
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
 }
 
 dependencies {

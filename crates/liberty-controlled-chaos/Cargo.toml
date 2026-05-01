@@ -3,6 +3,12 @@ name = "liberty-controlled-chaos"
 version = "0.1.0"
 edition = "2024"
 
+# rlib: used by host tests and liberty-node-cli.
+# cdylib: produces libliberty_controlled_chaos.so for Android JNI loading.
+# Load on Android with: System.loadLibrary("liberty_controlled_chaos")
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [features]
 android-ffi = []
 

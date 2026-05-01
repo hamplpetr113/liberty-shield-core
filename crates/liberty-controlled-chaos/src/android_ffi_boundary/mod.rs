@@ -13,6 +13,12 @@
 //! - `liberty_runtime_status() -> i32`
 //! - `liberty_ingest_packet(data: *const u8, len: u32) -> i32`
 //! - `liberty_poll_send_intent(buf: *mut u8, buf_len: u32) -> i32`
+//! - `liberty_tick_runtime(n: u32) -> i32`
+//!
+//! ## JNI bridge
+//! JNI-named wrappers are exported as:
+//!   `Java_com_libertyshield_agent_ffi_LibertyNative_native<Method>`
+//! Kotlin loads the library with `System.loadLibrary("liberty_ffi")`.
 //!
 //! ## Error codes
 //! | Code | Kotlin mapping |
@@ -244,6 +250,224 @@ pub unsafe extern "C" fn liberty_poll_send_intent(buf: *mut u8, buf_len: u32) ->
         },
         Err(_) => FFI_ERR_LOCK,
     }
+}
+
+/// Advance the runtime epoch by `n` ticks.
+///
+/// Drives the epoch clock and all subscribed subsystems forward by `n` steps.
+/// Returns `FFI_OK` on success, `FFI_ERR_NOT_INIT` if the runtime was never
+/// initialised, or `FFI_ERR_LOCK` if the mutex is poisoned.
+#[unsafe(no_mangle)]
+pub extern "C" fn liberty_tick_runtime(n: u32) -> i32 {
+    match global().lock() {
+        Ok(mut g) => match g.as_mut() {
+            None => FFI_ERR_NOT_INIT,
+            Some(s) => {
+                s.rt.advance_epoch_driven(n as u64);
+                FFI_OK
+            }
+        },
+        Err(_) => FFI_ERR_LOCK,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JNI bridge
+// ---------------------------------------------------------------------------
+//
+// Raw JNI types are defined inline — no external `jni` crate required.
+// Each function is named `Java_<package>_<class>_<method>` following the JNI
+// automatic symbol resolution convention.
+//
+// JNI function-table indices used (from JNI spec JNINativeInterface order):
+//   171 = GetArrayLength
+//   184 = GetByteArrayElements
+//   192 = ReleaseByteArrayElements
+
+mod jni_glue {
+    use std::ffi::c_void;
+
+    // JNIEnv = **const (table of opaque function pointers).
+    // On both 32-bit and 64-bit Android, usize == pointer size.
+    pub type JNIEnv = *const *const usize;
+    pub type JObject = *const c_void;
+    pub type JByteArray = JObject;
+    pub type JInt = i32;
+
+    // Mode for ReleaseByteArrayElements: copy back modifications and free copy.
+    pub const JNI_COPY_BACK: JInt = 0;
+    // Mode for ReleaseByteArrayElements: discard modifications (read-only use).
+    pub const JNI_ABORT: JInt = 2;
+
+    /// Number of elements in a Java array.
+    pub unsafe fn array_len(env: JNIEnv, arr: JByteArray) -> JInt {
+        #[allow(clippy::transmute_ptr_to_fn)]
+        unsafe {
+            type F = unsafe extern "C" fn(JNIEnv, JByteArray) -> JInt;
+            let fp: F = std::mem::transmute((*(*env).add(171)) as *const ());
+            fp(env, arr)
+        }
+    }
+
+    /// Pin the raw bytes of a Java byte array.  Caller MUST call
+    /// `release_array_elements` when done.
+    pub unsafe fn get_array_elements(env: JNIEnv, arr: JByteArray) -> *mut u8 {
+        #[allow(clippy::transmute_ptr_to_fn)]
+        unsafe {
+            type F = unsafe extern "C" fn(JNIEnv, JByteArray, *mut u8) -> *mut i8;
+            let fp: F = std::mem::transmute((*(*env).add(184)) as *const ());
+            let is_copy: *mut u8 = std::ptr::null_mut();
+            fp(env, arr, is_copy) as *mut u8
+        }
+    }
+
+    /// Release a byte array obtained from `get_array_elements`.
+    /// `mode`: `JNI_COPY_BACK` (0) copies back + frees; `JNI_ABORT` (2) frees only.
+    pub unsafe fn release_array_elements(env: JNIEnv, arr: JByteArray, elems: *mut u8, mode: JInt) {
+        #[allow(clippy::transmute_ptr_to_fn)]
+        unsafe {
+            type F = unsafe extern "C" fn(JNIEnv, JByteArray, *mut i8, JInt);
+            let fp: F = std::mem::transmute((*(*env).add(192)) as *const ());
+            fp(env, arr, elems as *mut i8, mode)
+        }
+    }
+}
+
+/// JNI: `LibertyNative.nativeInitNode(nodeId: ByteArray): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` and `node_id` must be valid JNI handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeInitNode(
+    env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+    node_id: jni_glue::JByteArray,
+) -> jni_glue::JInt {
+    if node_id.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let len = unsafe { jni_glue::array_len(env, node_id) };
+    if len != 32 {
+        return FFI_ERR_MALFORMED;
+    }
+    let ptr = unsafe { jni_glue::get_array_elements(env, node_id) };
+    if ptr.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let result = unsafe { liberty_init_node(ptr as *const u8) };
+    unsafe { jni_glue::release_array_elements(env, node_id, ptr, jni_glue::JNI_ABORT) };
+    result
+}
+
+/// JNI: `LibertyNative.nativeStartNode(): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` must be a valid JNI handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeStartNode(
+    _env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+) -> jni_glue::JInt {
+    liberty_start_node()
+}
+
+/// JNI: `LibertyNative.nativeStopNode(): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` must be a valid JNI handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeStopNode(
+    _env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+) -> jni_glue::JInt {
+    liberty_stop_node()
+}
+
+/// JNI: `LibertyNative.nativeRuntimeStatus(): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` must be a valid JNI handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeRuntimeStatus(
+    _env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+) -> jni_glue::JInt {
+    liberty_runtime_status()
+}
+
+/// JNI: `LibertyNative.nativeIngestPacket(data: ByteArray): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` and `data` must be valid JNI handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeIngestPacket(
+    env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+    data: jni_glue::JByteArray,
+) -> jni_glue::JInt {
+    if data.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let len = unsafe { jni_glue::array_len(env, data) };
+    if len <= 0 || len > 65_536 {
+        return FFI_ERR_MALFORMED;
+    }
+    let ptr = unsafe { jni_glue::get_array_elements(env, data) };
+    if ptr.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let result = unsafe { liberty_ingest_packet(ptr as *const u8, len as u32) };
+    unsafe { jni_glue::release_array_elements(env, data, ptr, jni_glue::JNI_ABORT) };
+    result
+}
+
+/// JNI: `LibertyNative.nativePollSendIntent(buf: ByteArray): Int`
+///
+/// Fills `buf` with the next outbound packet bytes. Returns the number of
+/// bytes written, or a negative error code. `buf` must be pre-allocated by
+/// the caller (recommend 65536 bytes).
+///
+/// # Safety
+/// Called by the JVM; `env` and `buf` must be valid JNI handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativePollSendIntent(
+    env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+    buf: jni_glue::JByteArray,
+) -> jni_glue::JInt {
+    if buf.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let len = unsafe { jni_glue::array_len(env, buf) };
+    if len <= 0 {
+        return FFI_ERR_BUFFER_TOO_SMALL;
+    }
+    let ptr = unsafe { jni_glue::get_array_elements(env, buf) };
+    if ptr.is_null() {
+        return FFI_ERR_NULL_PTR;
+    }
+    let result = unsafe { liberty_poll_send_intent(ptr, len as u32) };
+    // Copy back only if we wrote something (result > 0).
+    let mode = if result > 0 {
+        jni_glue::JNI_COPY_BACK
+    } else {
+        jni_glue::JNI_ABORT
+    };
+    unsafe { jni_glue::release_array_elements(env, buf, ptr, mode) };
+    result
+}
+
+/// JNI: `LibertyNative.nativeTickRuntime(n: Int): Int`
+///
+/// # Safety
+/// Called by the JVM; `env` must be a valid JNI handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_libertyshield_agent_ffi_LibertyNative_nativeTickRuntime(
+    _env: jni_glue::JNIEnv,
+    _class: jni_glue::JObject,
+    n: jni_glue::JInt,
+) -> jni_glue::JInt {
+    liberty_tick_runtime(n.max(0) as u32)
 }
 
 // ---------------------------------------------------------------------------
@@ -535,5 +759,33 @@ mod tests {
         let result = unsafe { liberty_ingest_packet(data.as_ptr(), 65536) };
         // Should be NOT_INIT (global uninitialised), not MALFORMED.
         assert_ne!(result, FFI_ERR_MALFORMED);
+    }
+
+    // AFFI23: liberty_tick_runtime returns a known code (NOT_INIT or OK or WRONG_STATE).
+    #[test]
+    fn affi23_tick_returns_known_code() {
+        let result = liberty_tick_runtime(1);
+        assert!(
+            result == FFI_OK || result == FFI_ERR_NOT_INIT || result == FFI_ERR_WRONG_STATE,
+            "unexpected code: {result}"
+        );
+    }
+
+    // AFFI24: advance_epoch_driven advances epoch by n from starting epoch.
+    #[test]
+    fn affi24_advance_epoch_driven() {
+        let mut rt = make_running_rt(20);
+        assert_eq!(rt.current_epoch(), 1);
+        rt.advance_epoch_driven(3);
+        assert_eq!(rt.current_epoch(), 4);
+    }
+
+    // AFFI25: advance_epoch_driven with n=0 does not change epoch.
+    #[test]
+    fn affi25_tick_zero_no_change() {
+        let mut rt = make_running_rt(21);
+        let before = rt.current_epoch();
+        rt.advance_epoch_driven(0);
+        assert_eq!(rt.current_epoch(), before);
     }
 }
