@@ -14,6 +14,7 @@
 //!
 //! NON-PRODUCTION: no real UDP socket is bound here; transport integration is in Sprint 157.
 
+use crate::circuit_build_runtime_driver::{BuildRequest, CircuitBuildRuntimeDriver, DriverConfig};
 use crate::circuit_manager::{CircuitId, CircuitManager, CircuitManagerError};
 use crate::live_circuit_build_protocol::LiveCircuitBuildProtocol;
 use crate::mesh_session_store::MeshSessionStore;
@@ -107,6 +108,7 @@ pub struct IntegratedNodeRuntime {
     guard: ResourceGuard,
     current_epoch: u64,
     epoch_driver: RuntimeEpochDriver,
+    build_driver: CircuitBuildRuntimeDriver,
 }
 
 impl IntegratedNodeRuntime {
@@ -130,6 +132,7 @@ impl IntegratedNodeRuntime {
             policy: PolicyEngine::new(),
             guard: ResourceGuard::new(budget),
             epoch_driver: RuntimeEpochDriver::new(EpochDriverConfig::default()),
+            build_driver: CircuitBuildRuntimeDriver::new(DriverConfig::default()),
             config,
             state: RuntimeState::New,
             current_epoch: 0,
@@ -365,11 +368,40 @@ impl IntegratedNodeRuntime {
             self.epoch_driver.tick();
             let new_epoch = self.epoch_driver.epoch();
             self.advance_epoch(new_epoch);
+            self.build_driver.tick(new_epoch);
         }
     }
 
     pub fn epoch_driver(&self) -> &RuntimeEpochDriver {
         &self.epoch_driver
+    }
+
+    // -----------------------------------------------------------------------
+    // Circuit build driver integration
+    // -----------------------------------------------------------------------
+
+    /// Enqueue a circuit build request.  Returns false if at capacity.
+    pub fn enqueue_circuit_build(&mut self, path: Vec<[u8; 32]>, circuit_id: u64) -> bool {
+        let req = BuildRequest {
+            circuit_id,
+            path,
+            queued_at_epoch: self.current_epoch,
+        };
+        self.build_driver.enqueue(req)
+    }
+
+    /// Tick the circuit build driver for the current epoch.
+    pub fn tick_circuit_builds(&mut self) {
+        self.build_driver.tick(self.current_epoch);
+    }
+
+    /// Mark a pending circuit build as complete.
+    pub fn complete_circuit_build(&mut self, circuit_id: u64) -> bool {
+        self.build_driver.complete(circuit_id, self.current_epoch)
+    }
+
+    pub fn build_driver(&self) -> &CircuitBuildRuntimeDriver {
+        &self.build_driver
     }
 
     // -----------------------------------------------------------------------
@@ -549,6 +581,46 @@ mod tests {
         });
         let result = rt.ingest_packet(&packet(99, 0), 1).unwrap();
         assert_eq!(result, PacketDecision::PolicyDenied);
+    }
+
+    // INR17: enqueue_circuit_build returns true and increments pending count.
+    #[test]
+    fn inr17_enqueue_circuit_build() {
+        let mut rt = started_runtime(1);
+        let path = vec![node_id(10), node_id(11), node_id(12)];
+        assert!(rt.enqueue_circuit_build(path, 1001));
+        assert_eq!(rt.build_driver().pending_count(), 1);
+    }
+
+    // INR18: tick_circuit_builds starts pending build.
+    #[test]
+    fn inr18_tick_starts_build() {
+        let mut rt = started_runtime(2);
+        rt.enqueue_circuit_build(vec![node_id(10), node_id(11), node_id(12)], 2001);
+        rt.tick_circuit_builds();
+        assert_eq!(rt.build_driver().in_flight_count(), 1);
+        assert_eq!(rt.build_driver().pending_count(), 0);
+    }
+
+    // INR19: complete_circuit_build marks build done.
+    #[test]
+    fn inr19_complete_circuit_build() {
+        let mut rt = started_runtime(3);
+        rt.enqueue_circuit_build(vec![node_id(10), node_id(11), node_id(12)], 3001);
+        rt.tick_circuit_builds();
+        assert!(rt.complete_circuit_build(3001));
+        assert_eq!(rt.build_driver().in_flight_count(), 0);
+        assert_eq!(rt.build_driver().completed_builds().len(), 1);
+    }
+
+    // INR20: advance_epoch_driven ticks build driver each step.
+    #[test]
+    fn inr20_epoch_driven_ticks_build_driver() {
+        let mut rt = started_runtime(4);
+        rt.enqueue_circuit_build(vec![node_id(10), node_id(11), node_id(12)], 4001);
+        rt.advance_epoch_driven(1);
+        assert_eq!(rt.build_driver().in_flight_count(), 1);
+        assert_eq!(rt.build_driver().metrics().total_started, 1);
     }
 
     // INR11: advance_epoch_driven advances current_epoch.

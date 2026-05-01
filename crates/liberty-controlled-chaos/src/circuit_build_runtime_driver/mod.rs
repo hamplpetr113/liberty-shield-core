@@ -142,9 +142,7 @@ impl CircuitBuildRuntimeDriver {
         let timed_out: Vec<u64> = self
             .in_flight
             .iter()
-            .filter(|(_, (_, queued_at))| {
-                current_epoch.saturating_sub(*queued_at) >= timeout
-            })
+            .filter(|(_, (_, queued_at))| current_epoch.saturating_sub(*queued_at) >= timeout)
             .map(|(id, _)| *id)
             .collect();
 
