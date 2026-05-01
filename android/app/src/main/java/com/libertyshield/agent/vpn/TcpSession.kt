@@ -34,12 +34,14 @@ class TcpSession(
     private var relaySeq: Long = 0L
     private var relayAck: Long = 0L
 
+    // ── Point 3: TcpSession receives packet ───────────────────────────────────
     suspend fun handle(buf: ByteArray) {
         val seg = parseTcpSegment(buf) ?: return
         if (Log.isLoggable(TAG, Log.DEBUG)) {
-            Log.d(TAG, "PKT $srcIp:$srcPort->$dstIp:$dstPort " +
-                "flags=0x${seg.flags.toString(16)} seq=${seg.seq} ack=${seg.ack} " +
-                "payloadLen=${seg.payloadLen} state=$state")
+            Log.d(TAG, "[3] PKT $srcIp:$srcPort→$dstIp:$dstPort " +
+                "flags=${flagsStr(seg.flags)} seq=${seg.seq} ack=${seg.ack} " +
+                "ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} " +
+                "payloadOffset=${seg.payloadOffset} payloadLen=${seg.payloadLen} state=$state")
         }
         sessionMutex.withLock {
             when (state) {
@@ -61,6 +63,8 @@ class TcpSession(
         val flags: Int,
         val seq: Long,
         val ack: Long,
+        val ipHdrLen: Int,
+        val tcpHdrLen: Int,
         val payloadOffset: Int,
         val payloadLen: Int,
     )
@@ -71,18 +75,26 @@ class TcpSession(
         val flags      = buf[ihl + 13].toInt() and 0xFF
         val seq        = readU32(buf, ihl + 4)
         val ack        = readU32(buf, ihl + 8)
-        val dataOffset = ((buf[ihl + 12].toInt() and 0xFF) shr 4) * 4
+        val tcpHdrLen  = ((buf[ihl + 12].toInt() and 0xFF) shr 4) * 4
         val totalLen   = readU16(buf, 2)
-        val payloadLen = maxOf(0, totalLen - ihl - dataOffset)
-        return TcpSegment(flags, seq, ack, ihl + dataOffset, payloadLen)
+        val payloadLen = maxOf(0, totalLen - ihl - tcpHdrLen)
+        return TcpSegment(flags, seq, ack, ihl, tcpHdrLen, ihl + tcpHdrLen, payloadLen)
     }
 
-    private fun extractPayload(buf: ByteArray): ByteArray {
-        val seg = parseTcpSegment(buf) ?: return ByteArray(0)
+    // ── Point 4: payload extracted from client packet ─────────────────────────
+    private fun extractPayload(buf: ByteArray, seg: TcpSegment): ByteArray {
         if (seg.payloadLen == 0) return ByteArray(0)
         val end = minOf(seg.payloadOffset + seg.payloadLen, buf.size)
         if (end <= seg.payloadOffset) return ByteArray(0)
-        return buf.copyOfRange(seg.payloadOffset, end)
+        val payload = buf.copyOfRange(seg.payloadOffset, end)
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            val preview = if (payload.isNotEmpty()) payloadPreview(payload) else "(empty)"
+            Log.d(TAG, "[4] EXTRACT $srcIp:$srcPort→$dstIp:$dstPort " +
+                "ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} " +
+                "payloadOffset=${seg.payloadOffset} payloadLen=${seg.payloadLen} " +
+                "actualExtracted=${payload.size} bufSize=${buf.size} preview=$preview")
+        }
+        return payload
     }
 
     private fun ipHdrLen(buf: ByteArray): Int = (buf[0].toInt() and 0x0F) * 4
@@ -98,23 +110,43 @@ class TcpSession(
 
     private fun mask32(v: Long): Long = v and 0xFFFF_FFFFL
 
+    /** Decode the first byte of payload to identify protocol type for logs. */
+    private fun payloadPreview(data: ByteArray): String {
+        val b0 = data[0].toInt() and 0xFF
+        return when {
+            b0 == 0x16 -> "TLS_RECORD(0x16)"   // TLS handshake/data record
+            b0 == 0x15 -> "TLS_ALERT(0x15)"
+            b0 == 0x14 -> "TLS_CCS(0x14)"      // ChangeCipherSpec
+            data.size >= 4 && data.slice(0..2).map { it.toInt() and 0xFF } == listOf(0x47, 0x45, 0x54) -> "HTTP_GET"
+            data.size >= 4 && data.slice(0..3).map { it.toInt() and 0xFF } == listOf(0x48, 0x54, 0x54, 0x50) -> "HTTP_RESP"
+            else -> "0x${b0.toString(16)}"
+        }
+    }
+
+    /** Human-readable TCP flags for structured logs. */
+    private fun flagsStr(f: Int): String {
+        val sb = StringBuilder()
+        if (f and TcpPacketBuilder.FLAG_SYN != 0) sb.append("SYN|")
+        if (f and TcpPacketBuilder.FLAG_ACK != 0) sb.append("ACK|")
+        if (f and TcpPacketBuilder.FLAG_PSH != 0) sb.append("PSH|")
+        if (f and TcpPacketBuilder.FLAG_FIN != 0) sb.append("FIN|")
+        if (f and TcpPacketBuilder.FLAG_RST != 0) sb.append("RST|")
+        return if (sb.isEmpty()) "0x${f.toString(16)}" else sb.toString().trimEnd('|')
+    }
+
     private suspend fun handleClosed(seg: TcpSegment) {
         val isSyn = seg.flags and TcpPacketBuilder.FLAG_SYN != 0
         val isAck = seg.flags and TcpPacketBuilder.FLAG_ACK != 0
         val isRst = seg.flags and TcpPacketBuilder.FLAG_RST != 0
         when {
-            isRst -> {
-                teardown()
-            }
-            isSyn && !isAck -> {
-                onSyn(seg)
-            }
+            isRst -> teardown()
+            isSyn && !isAck -> onSyn(seg)
             isAck -> {
-                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, seg.ack, 0L))
+                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, seg.ack, 0L), "RST")
                 teardown()
             }
             else -> {
-                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, mask32(seg.seq + 1), ackFlag = true))
+                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, mask32(seg.seq + 1), ackFlag = true), "RST|ACK")
                 teardown()
             }
         }
@@ -131,7 +163,7 @@ class TcpSession(
             if (!vpnService.protect(sock)) {
                 Log.w(TAG, "TCP protect() failed for $dstIp:$dstPort")
                 sock.close()
-                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true))
+                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true), "RST|ACK")
                 teardown()
                 return
             }
@@ -140,12 +172,12 @@ class TcpSession(
             server = sock
             serverOut = sock.getOutputStream()
             state = State.SYN_RECEIVED
-            Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort->$dstIp:$dstPort")
-            send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
+            Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort→$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
+            send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "SYN|ACK")
             relaySeq = mask32(relaySeq + 1)
         } catch (e: Exception) {
             Log.w(TAG, "TCP connect failed $dstIp:$dstPort: ${e::class.java.simpleName}: ${e.message}")
-            send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true))
+            send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true), "RST|ACK")
             teardown()
         }
     }
@@ -155,13 +187,12 @@ class TcpSession(
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
             seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
                 state = State.ESTABLISHED
-                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort->$dstIp:$dstPort payloadLen=${seg.payloadLen}")
+                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort→$dstIp:$dstPort payloadLen=${seg.payloadLen}")
                 startServerReader()
-                // Forward any piggybacked payload (e.g. TLS ClientHello on ACK)
                 if (seg.payloadLen > 0) {
-                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort->$dstIp:$dstPort")
+                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort")
                 } else {
-                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK (no payload) — awaiting ClientHello")
+                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK — awaiting ClientHello")
                 }
                 handleEstablished(seg, buf)
             }
@@ -171,41 +202,46 @@ class TcpSession(
     private suspend fun handleEstablished(seg: TcpSegment, buf: ByteArray) {
         when {
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> {
-                Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort->$dstIp:$dstPort")
+                Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort→$dstIp:$dstPort")
                 teardown()
             }
             seg.flags and TcpPacketBuilder.FLAG_FIN != 0 -> {
-                Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort->$dstIp:$dstPort")
+                Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
                 relayAck = mask32(seg.seq + 1)
-                send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
+                send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "FIN|ACK")
                 relaySeq = mask32(relaySeq + 1)
                 teardown()
             }
             else -> {
-                val payload = extractPayload(buf)
+                // ALL non-RST non-FIN packets reach here, including pure ACK and ACK+payload.
+                // Payload is forwarded whenever payloadLen > 0, regardless of which flags are set.
+                val payload = extractPayload(buf, seg)
                 if (payload.isNotEmpty()) {
                     relayAck = mask32(seg.seq + payload.size)
-                    Log.d(TAG, "c→s ${payload.size}B flags=0x${seg.flags.toString(16)} seq=${seg.seq} $srcIp:$srcPort->$dstIp:$dstPort")
+                    Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
+                        "newRelayAck=$relayAck $srcIp:$srcPort→$dstIp:$dstPort")
                     forwardToServer(payload)
-                    send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
+                    send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK")
                 } else {
-                    Log.d(TAG, "c→s 0B (pure ACK) flags=0x${seg.flags.toString(16)} seq=${seg.seq} $srcIp:$srcPort->$dstIp:$dstPort")
+                    Log.d(TAG, "c→s 0B pure-ACK flags=${flagsStr(seg.flags)} seq=${seg.seq} $srcIp:$srcPort→$dstIp:$dstPort")
                 }
             }
         }
     }
 
+    // ── Point 5: payload forwarded to server socket ───────────────────────────
     private fun forwardToServer(data: ByteArray) {
         try {
             val out = serverOut ?: run {
-                Log.e(TAG, "forwardToServer: serverOut is null — dropping ${data.size}B $srcIp:$srcPort->$dstIp:$dstPort")
+                Log.e(TAG, "[5] forwardToServer: serverOut null — dropping ${data.size}B $srcIp:$srcPort→$dstIp:$dstPort")
                 return
             }
+            Log.d(TAG, "[5] forwardToServer: writing ${data.size}B to $dstIp:$dstPort")
             out.write(data)
-            out.flush()   // ensure Nagle algorithm doesn't delay TLS handshake bytes
-            Log.d(TAG, "forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
+            out.flush()
+            Log.d(TAG, "[5] forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
         } catch (e: Exception) {
-            Log.w(TAG, "forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
+            Log.w(TAG, "[5] forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
             teardown()
         }
     }
@@ -218,6 +254,8 @@ class TcpSession(
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
+                    // ── Point 6: bytes read from server socket ─────────────────
+                    Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
                     // Split into MSS-sized chunks so every IP packet stays within the
                     // TUN MTU (1500).  A single inp.read() can return up to READ_BUFFER_SIZE
                     // bytes; building one oversized packet from that causes EMSGSIZE on the
@@ -229,11 +267,14 @@ class TcpSession(
                         offset += chunkLen
                         sessionMutex.withLock {
                             if (state != State.ESTABLISHED) return@withLock
-                            Log.d(TAG, "s→c ${chunk.size}B $srcIp:$srcPort->$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
+                            // ── Point 7: packet built back to TUN ─────────────
+                            Log.d(TAG, "[7] BUILD DATA ${chunk.size}B $srcIp:$srcPort→$dstIp:$dstPort " +
+                                "relaySeq=$relaySeq relayAck=$relayAck " +
+                                "preview=${payloadPreview(chunk)}")
                             val pkt = TcpPacketBuilder.buildData(
                                 dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
                             )
-                            send(pkt)
+                            send(pkt, "PSH|ACK data=${chunk.size}B")
                             relaySeq = mask32(relaySeq + chunk.size)
                         }
                     }
@@ -243,8 +284,10 @@ class TcpSession(
         }
     }
 
-    private suspend fun send(pkt: ByteArray) {
+    // ── Point 8: packet written to TUN ────────────────────────────────────────
+    private suspend fun send(pkt: ByteArray, desc: String = "?") {
         writeMutex.withLock {
+            Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
             tunOut.write(pkt)
             tunOut.flush()
         }
@@ -258,7 +301,7 @@ class TcpSession(
         serverOut = null
         runCatching { server?.close() }
         server = null
-        Log.d(TAG, "torn down $srcIp:$srcPort->$dstIp:$dstPort")
+        Log.d(TAG, "torn down $srcIp:$srcPort→$dstIp:$dstPort")
         onClose()
     }
 
