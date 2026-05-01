@@ -13,6 +13,7 @@ pub mod bandwidth_accounting;
 pub mod beta_integration_harness;
 pub mod beta_network_simulator;
 pub mod beta_node_bootstrap;
+pub mod beta_readiness_report_v2;
 pub mod beta_runtime_launcher;
 pub mod beta_runtime_launcher_v2;
 pub mod bootstrap_state_machine;
