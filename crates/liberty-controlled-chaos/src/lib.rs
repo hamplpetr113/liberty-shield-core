@@ -10,6 +10,7 @@ pub mod anti_correlation_scheduler;
 pub mod anti_correlation_timing;
 pub mod backpressure;
 pub mod bandwidth_accounting;
+pub mod beta_checkpoint;
 pub mod beta_integration_harness;
 pub mod beta_network_simulator;
 pub mod beta_node_bootstrap;
