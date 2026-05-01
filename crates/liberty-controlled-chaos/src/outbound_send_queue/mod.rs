@@ -107,6 +107,27 @@ impl OutboundSendQueue {
     // Read
     // -----------------------------------------------------------------------
 
+    /// Re-insert a packet at the front of the queue (preserves FIFO after a
+    /// failed delivery attempt).  If the queue is full and the policy is
+    /// `DropNewest`, the packet is discarded and `Err(QueueFull)` is returned.
+    pub fn push_front(&mut self, pkt: QueuedPacket) -> Result<(), QueueError> {
+        if self.buf.len() >= self.capacity {
+            self.metrics.total_dropped += 1;
+            match self.policy {
+                OverflowPolicy::DropNewest => return Err(QueueError::QueueFull),
+                OverflowPolicy::DropOldest => {
+                    self.buf.pop_back();
+                }
+            }
+        }
+        self.buf.push_front(pkt);
+        self.metrics.total_pushed += 1;
+        if self.buf.len() > self.metrics.peak_depth {
+            self.metrics.peak_depth = self.buf.len();
+        }
+        Ok(())
+    }
+
     /// Dequeue the oldest packet. Returns `Err(QueueError::Empty)` if empty.
     pub fn pop(&mut self) -> Result<QueuedPacket, QueueError> {
         match self.buf.pop_front() {
