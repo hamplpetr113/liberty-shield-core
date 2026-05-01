@@ -217,7 +217,15 @@ class TcpSession(
                 // Payload is forwarded whenever payloadLen > 0, regardless of which flags are set.
                 val payload = extractPayload(buf, seg)
                 if (payload.isNotEmpty()) {
-                    relayAck = mask32(seg.seq + payload.size)
+                    val nextSeq = mask32(seg.seq + payload.size)
+                    if (seq32Covered(nextSeq, relayAck)) {
+                        // Retransmit — these bytes were already forwarded; re-ACK without forwarding.
+                        // Forwarding duplicates corrupts the server stream (TLS_ALERT, Connection reset).
+                        Log.d(TAG, "c→s RETRANSMIT ${payload.size}B seq=${seg.seq} covered by relayAck=$relayAck — skip $srcIp:$srcPort→$dstIp:$dstPort")
+                        send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK retransmit")
+                        return
+                    }
+                    relayAck = nextSeq
                     Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
                         "newRelayAck=$relayAck $srcIp:$srcPort→$dstIp:$dstPort")
                     forwardToServer(payload)
@@ -313,5 +321,10 @@ class TcpSession(
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"
+
+        // Returns true when nextSeq falls within [relayAck-window, relayAck] in 32-bit circular
+        // space, meaning those bytes were already forwarded. Used to detect client retransmits.
+        private fun seq32Covered(nextSeq: Long, relayAck: Long): Boolean =
+            ((relayAck - nextSeq) and 0xFFFF_FFFFL) < 0x8000_0000L
     }
 }
