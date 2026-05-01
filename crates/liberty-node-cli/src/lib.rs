@@ -1,5 +1,8 @@
+pub mod adversarial_simulator;
 pub mod args;
 pub mod circuit_builder;
+pub mod circuit_extend_protocol;
+pub mod circuit_extend_state;
 pub mod cluster_manager;
 pub mod cluster_metrics;
 pub mod cluster_packet_flow;
@@ -8,6 +11,7 @@ pub mod cluster_topology;
 pub mod cluster_types;
 pub mod config;
 pub mod cover_traffic_engine;
+pub mod directory_consensus;
 pub mod encrypted_cell_fixture;
 pub mod encrypted_circuit_path;
 pub mod encrypted_circuit_runtime;
@@ -29,21 +33,30 @@ pub mod onion_crypto;
 pub mod onion_packet;
 pub mod onion_router;
 pub mod output;
+pub mod path_selection;
 pub mod peer_directory;
 pub mod peer_table;
+pub mod relay_cell;
+pub mod relay_cell_codec;
 pub mod runtime_state;
+pub mod traffic_scheduler;
 pub mod udp_loopback_socket;
 pub mod udp_testnet_cluster;
 pub mod udp_testnet_node;
 pub mod udp_testnet_packet;
 pub mod udp_testnet_types;
 
+use adversarial_simulator::{
+    run_packet_size_observation, run_replay_attempt, run_route_guessing, run_timing_observation,
+};
 use args::{Command, parse_args};
 use circuit_builder::CircuitBuilder;
+use circuit_extend_protocol::CircuitExtendProtocol;
 use cluster_manager::LocalCluster;
 use cluster_topology::{build_cluster_configs, parse_profile};
 use config::NodeConfig;
 use cover_traffic_engine::CoverTrafficEngine;
+use directory_consensus::{DirectoryAuthorityId, build_deterministic_consensus};
 use encrypted_circuit_path::EncryptedCircuitPath;
 use encrypted_circuit_runtime::EncryptedCircuitRuntime;
 use encrypted_udp_cluster::EncryptedUdpCluster;
@@ -52,17 +65,24 @@ use node_runtime::NodeRuntime;
 use node_service::NodeService;
 use onion_router::OnionRouter;
 use output::{
-    bench_json, circuit_run_json, circuit_status_json, cluster_bench_json, cluster_error_json,
-    cluster_peers_json, cluster_run_json, cluster_start_json, cluster_status_json,
-    cluster_topology_json, cover_traffic_run_json, directory_status_json, encrypted_udp_bench_json,
-    encrypted_udp_error_json, encrypted_udp_probe_json, encrypted_udp_send_json,
-    encrypted_udp_start_json, encrypted_udp_status_json, handshake_error_json, handshake_ring_json,
-    metrics_json, onion_circuit_build_json, onion_error_json, onion_send_json, onion_simulate_json,
-    peers_json, service_error_json, start_json, status_json, topology_json, udp_testnet_bench_json,
-    udp_testnet_data_json, udp_testnet_error_json, udp_testnet_probe_json, udp_testnet_start_json,
+    adversarial_sim_json, bench_json, circuit_extend_test_json, circuit_run_json,
+    circuit_status_json, cluster_bench_json, cluster_error_json, cluster_peers_json,
+    cluster_run_json, cluster_start_json, cluster_status_json, cluster_topology_json,
+    cover_traffic_run_json, directory_consensus_json, directory_status_json,
+    encrypted_udp_bench_json, encrypted_udp_error_json, encrypted_udp_probe_json,
+    encrypted_udp_send_json, encrypted_udp_start_json, encrypted_udp_status_json,
+    handshake_error_json, handshake_ring_json, metrics_json, onion_circuit_build_json,
+    onion_error_json, onion_send_json, onion_simulate_json, path_select_json, peers_json,
+    relay_cell_test_json, service_error_json, sprint25_30_error_json, start_json, status_json,
+    topology_json, traffic_schedule_json, udp_testnet_bench_json, udp_testnet_data_json,
+    udp_testnet_error_json, udp_testnet_probe_json, udp_testnet_start_json,
     udp_testnet_status_json,
 };
+use path_selection::{PathSelectionPolicy, PathSelector};
 use peer_directory::{PeerDescriptor, PeerDirectory, PeerRole};
+use relay_cell::{RelayCell, RelayCommand};
+use relay_cell_codec::{decode_relay_cell, encode_relay_cell};
+use traffic_scheduler::{SchedulerPolicy, TrafficScheduler};
 use udp_testnet_cluster::UdpTestnetCluster;
 
 pub fn run_cli(args: &[String]) -> String {
@@ -611,6 +631,120 @@ fn execute(cmd: Command) -> String {
             rt.build_circuits(circuits);
             let result = rt.run_rounds(rounds);
             bench_json(&result, node_count, circuits).to_string()
+        }
+
+        // ── Sprint 25-30 commands ─────────────────────────────────────────────
+        Command::RelayCellTest { payload } => {
+            let cell = RelayCell::new(
+                1,
+                1,
+                RelayCommand::RelayData,
+                0,
+                payload.as_bytes().to_vec(),
+            );
+            match encode_relay_cell(&cell) {
+                Ok(encoded) => match decode_relay_cell(&encoded) {
+                    Ok(decoded) => {
+                        relay_cell_test_json(payload.len(), decoded == cell, "RelayData")
+                            .to_string()
+                    }
+                    Err(e) => sprint25_30_error_json(&format!("{e:?}")).to_string(),
+                },
+                Err(e) => sprint25_30_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::CircuitExtendTest { hops } => {
+            if hops < 3 {
+                return sprint25_30_error_json("hops must be >= 3").to_string();
+            }
+            let mut proto = CircuitExtendProtocol::new(1, 10);
+            for hop in 1..hops as u64 {
+                let target = 20 + hop;
+                let next = target;
+                if proto.begin_extend(target, next).is_err() {
+                    return sprint25_30_error_json("extend failed").to_string();
+                }
+                if proto
+                    .handle_extend_response(&circuit_extend_protocol::make_ok_response(hop))
+                    .is_err()
+                {
+                    return sprint25_30_error_json("response failed").to_string();
+                }
+            }
+            circuit_extend_test_json(proto.state.hop_count(), proto.is_ready()).to_string()
+        }
+        Command::PathSelect { nodes } => {
+            if nodes < 3 {
+                return sprint25_30_error_json("nodes must be >= 3").to_string();
+            }
+            let peers: Vec<_> = (1..=nodes as u64)
+                .map(|id| PeerDescriptor::deterministic(id, 45000))
+                .collect();
+            let sel = PathSelector::new(&peers, PathSelectionPolicy::default());
+            match sel.select_path() {
+                Ok(path) => {
+                    let guard = path.guard().0;
+                    let exit = path.exit().0;
+                    let relay = path.hops.get(1).map(|id| id.0).unwrap_or(0);
+                    path_select_json(nodes, guard, relay, exit).to_string()
+                }
+                Err(e) => sprint25_30_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::DirectoryConsensus { nodes, epoch } => {
+            let auth = DirectoryAuthorityId(0xABCD_1234);
+            let ids: Vec<u64> = (1..=nodes as u64).collect();
+            match build_deterministic_consensus(epoch, auth, &ids, 45000) {
+                Ok(consensus) => {
+                    let guards = consensus.list_guards().len();
+                    let relays = consensus.list_relays().len();
+                    let exits = consensus.list_exits().len();
+                    directory_consensus_json(epoch, nodes, guards, relays, exits).to_string()
+                }
+                Err(e) => sprint25_30_error_json(&format!("{e:?}")).to_string(),
+            }
+        }
+        Command::TrafficSchedule {
+            real_packets,
+            cover_packets,
+            epochs,
+        } => {
+            let policy = SchedulerPolicy {
+                max_real_per_epoch: real_packets.max(1),
+                min_cover_per_epoch: cover_packets,
+                ..SchedulerPolicy::default()
+            };
+            let mut sched = TrafficScheduler::new(policy);
+            for i in 0..real_packets {
+                sched.enqueue_real(vec![i as u8]);
+            }
+            for i in 0..cover_packets {
+                sched.enqueue_cover(vec![i as u8]);
+            }
+            let mut total_drained = 0;
+            for _ in 0..epochs {
+                sched.tick_epoch();
+                total_drained += sched.drain_epoch().len();
+            }
+            traffic_schedule_json(epochs, real_packets, cover_packets, total_drained).to_string()
+        }
+        Command::AdversarialSim { model, count } => {
+            let result = match model.as_str() {
+                "packet-size" | "size" => run_packet_size_observation(1, 0xABCD, count),
+                "timing" => run_timing_observation(count),
+                "route-guess" | "route" => run_route_guessing(count / 2 + 1, count / 2),
+                "replay" => run_replay_attempt(),
+                other => {
+                    return sprint25_30_error_json(&format!("unknown model: {other}")).to_string();
+                }
+            };
+            adversarial_sim_json(
+                &model,
+                result.packets_observed,
+                result.size_uniform,
+                result.replay_succeeded,
+            )
+            .to_string()
         }
     }
 }
@@ -2174,6 +2308,271 @@ mod tests {
             assert!(
                 !out.contains("0.0.0.0"),
                 "onion command `{cmd}` must not output 0.0.0.0: {out}"
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 25-30 — CLI integration tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // SP25-CLI1: relay-cell-test returns roundtrip_ok=true
+    #[test]
+    fn sp25_cli1_relay_cell_test_json() {
+        let out = run_cli(&args("relay-cell-test --payload hello"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "relay-cell-test");
+        assert_eq!(v["roundtrip_ok"], true);
+        assert_eq!(v["payload_len"], 5);
+        assert_eq!(v["relay_command"], "RelayData");
+    }
+
+    // SP25-CLI2: relay-cell-test with empty payload
+    #[test]
+    fn sp25_cli2_relay_cell_empty_payload() {
+        let out = run_cli(&args("relay-cell-test --payload "));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["roundtrip_ok"], true);
+    }
+
+    // SP26-CLI1: circuit-extend-test with 3 hops returns is_ready=true
+    #[test]
+    fn sp26_cli1_circuit_extend_test_json() {
+        let out = run_cli(&args("circuit-extend-test --hops 3"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "circuit-extend-test");
+        assert_eq!(v["hops"], 3);
+        assert_eq!(v["is_ready"], true);
+        assert_eq!(v["status"], "extended");
+    }
+
+    // SP26-CLI2: circuit-extend-test with < 3 hops returns error
+    #[test]
+    fn sp26_cli2_circuit_extend_too_few_hops() {
+        let out = run_cli(&args("circuit-extend-test --hops 2"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // SP27-CLI1: path-select returns valid 3-hop path JSON
+    #[test]
+    fn sp27_cli1_path_select_json() {
+        let out = run_cli(&args("path-select --nodes 9"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "path-select");
+        assert_eq!(v["hops"], 3);
+        assert_eq!(v["status"], "selected");
+        assert!(
+            v["guard"].as_u64().unwrap() % 3 == 0,
+            "guard must have Guard role"
+        );
+        assert!(
+            v["exit"].as_u64().unwrap() % 3 == 2,
+            "exit must have Exit role"
+        );
+    }
+
+    // SP27-CLI2: path-select with too few nodes returns error
+    #[test]
+    fn sp27_cli2_path_select_too_few_nodes() {
+        let out = run_cli(&args("path-select --nodes 2"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // SP28-CLI1: directory-consensus returns epoch + role counts
+    #[test]
+    fn sp28_cli1_directory_consensus_json() {
+        let out = run_cli(&args("directory-consensus --nodes 9 --epoch 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "directory-consensus");
+        assert_eq!(v["epoch"], 5);
+        assert_eq!(v["nodes"], 9);
+        assert_eq!(v["guards"], 3);
+        assert_eq!(v["relays"], 3);
+        assert_eq!(v["exits"], 3);
+        assert_eq!(v["status"], "built");
+    }
+
+    // SP29-CLI1: traffic-schedule returns drain count JSON
+    #[test]
+    fn sp29_cli1_traffic_schedule_json() {
+        let out = run_cli(&args("traffic-schedule --real 5 --cover 3 --epochs 2"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "traffic-schedule");
+        assert_eq!(v["epochs"], 2);
+        assert_eq!(v["real_enqueued"], 5);
+        assert_eq!(v["cover_enqueued"], 3);
+        // All packets should have been drained across 2 epochs
+        let drained = v["total_drained"].as_u64().unwrap();
+        assert!(drained > 0);
+    }
+
+    // SP30-CLI1: adversarial-sim packet-size returns size_uniform=true
+    #[test]
+    fn sp30_cli1_adversarial_sim_packet_size() {
+        let out = run_cli(&args("adversarial-sim --model packet-size --count 10"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["command"], "adversarial-sim");
+        assert_eq!(v["size_uniform"], true);
+        assert_eq!(v["replay_succeeded"], false);
+        assert_eq!(v["packets_observed"], 10);
+    }
+
+    // SP30-CLI2: adversarial-sim replay model
+    #[test]
+    fn sp30_cli2_adversarial_sim_replay() {
+        let out = run_cli(&args("adversarial-sim --model replay --count 2"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["replay_succeeded"], false);
+    }
+
+    // SP30-CLI3: adversarial-sim timing model
+    #[test]
+    fn sp30_cli3_adversarial_sim_timing() {
+        let out = run_cli(&args("adversarial-sim --model timing --count 5"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["packets_observed"], 5);
+    }
+
+    // SP30-CLI4: unknown adversarial model returns error
+    #[test]
+    fn sp30_cli4_adversarial_sim_unknown_model() {
+        let out = run_cli(&args("adversarial-sim --model bogus --count 1"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    // All Sprint 25-30 commands produce valid JSON
+    #[test]
+    fn sp_all_commands_valid_json() {
+        let cmds = [
+            "relay-cell-test --payload test",
+            "circuit-extend-test --hops 3",
+            "path-select --nodes 9",
+            "directory-consensus --nodes 9 --epoch 1",
+            "traffic-schedule --real 3 --cover 2 --epochs 1",
+            "adversarial-sim --model packet-size --count 5",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            let parsed = serde_json::from_str::<serde_json::Value>(&out);
+            assert!(parsed.is_ok(), "JSON parse failed for `{cmd}`: {out}");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sprint 25-30 — Security hardening tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // SEC25: relay unknown command rejected
+    #[test]
+    fn sec25_relay_unknown_command_rejected() {
+        use crate::relay_cell::{RelayCell, RelayCommand};
+        use crate::relay_cell_codec::{RELAY_HEADER_SIZE, decode_relay_cell, encode_relay_cell};
+        let cell = RelayCell::new(1, 1, RelayCommand::RelayData, 0, b"x".to_vec());
+        let mut encoded = encode_relay_cell(&cell).unwrap();
+        encoded[16] = 200;
+        assert!(decode_relay_cell(&encoded).is_err());
+    }
+
+    // SEC26: circuit duplicate hop rejected
+    #[test]
+    fn sec26_circuit_duplicate_hop_rejected() {
+        use crate::circuit_extend_protocol::{
+            CircuitExtendProtocol, ExtendError, make_ok_response,
+        };
+        let mut p = CircuitExtendProtocol::new(1, 10);
+        p.begin_extend(20, 20).unwrap();
+        p.handle_extend_response(&make_ok_response(1)).unwrap();
+        assert_eq!(
+            p.begin_extend(20, 20).unwrap_err(),
+            ExtendError::DuplicateHop
+        );
+    }
+
+    // SEC27: path duplicate node rejected
+    #[test]
+    fn sec27_path_duplicate_node_rejected() {
+        use crate::path_selection::{PathSelectionError, PathSelectionPolicy, PathSelector};
+        // Only 2 nodes available — can't build 3-hop without duplicates
+        let p: Vec<_> = (1u64..=2)
+            .map(|id| PeerDescriptor::deterministic(id, 45000))
+            .collect();
+        let sel = PathSelector::new(&p, PathSelectionPolicy::default());
+        assert!(sel.select_path().is_err());
+    }
+
+    // SEC28: invalid consensus signature rejected
+    #[test]
+    fn sec28_invalid_consensus_signature_rejected() {
+        use crate::directory_consensus::{
+            ConsensusError, DirectoryAuthorityId, DirectoryConsensus, NodeDescriptor,
+        };
+        let auth = DirectoryAuthorityId(42);
+        let c = DirectoryConsensus::new(1, auth);
+        let mut s = c.sign_descriptor(NodeDescriptor::deterministic(3, 45000));
+        s.signature ^= 0xFF;
+        assert_eq!(
+            DirectoryConsensus::verify_descriptor(&s).unwrap_err(),
+            ConsensusError::InvalidSignature
+        );
+    }
+
+    // SEC29: scheduler never exceeds max_real_per_epoch
+    #[test]
+    fn sec29_scheduler_never_exceeds_max_real() {
+        use crate::traffic_scheduler::{SchedulerPolicy, TrafficKind, TrafficScheduler};
+        let policy = SchedulerPolicy {
+            max_real_per_epoch: 3,
+            min_cover_per_epoch: 0,
+            padding_floor: 0,
+            ..SchedulerPolicy::default()
+        };
+        let mut s = TrafficScheduler::new(policy);
+        for i in 0..20u8 {
+            s.enqueue_real(vec![i]);
+        }
+        let drained = s.drain_epoch();
+        let real_count = drained
+            .iter()
+            .filter(|p| p.kind == TrafficKind::Real)
+            .count();
+        assert!(real_count <= 3);
+    }
+
+    // SEC30: replay attacker never succeeds
+    #[test]
+    fn sec30_replay_attacker_rejected() {
+        use crate::adversarial_simulator::run_replay_attempt;
+        let result = run_replay_attempt();
+        assert!(!result.replay_succeeded);
+    }
+
+    // SEC31: default config remains simulation-only
+    #[test]
+    fn sec31_default_config_simulation_only() {
+        let cfg = config::NodeConfig::default();
+        assert!(cfg.simulation_mode);
+        assert!(!cfg.allow_real_udp);
+    }
+
+    // SEC32: no new Sprint 25-30 command outputs 0.0.0.0
+    #[test]
+    fn sec32_no_new_command_outputs_public_address() {
+        let cmds = [
+            "relay-cell-test --payload hello",
+            "circuit-extend-test --hops 3",
+            "path-select --nodes 9",
+            "directory-consensus --nodes 9 --epoch 1",
+            "traffic-schedule --real 3 --cover 2 --epochs 1",
+            "adversarial-sim --model packet-size --count 5",
+        ];
+        for cmd in &cmds {
+            let out = run_cli(&args(cmd));
+            assert!(
+                !out.contains("0.0.0.0"),
+                "`{cmd}` must not output 0.0.0.0: {out}"
             );
         }
     }
