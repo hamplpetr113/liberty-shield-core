@@ -119,6 +119,7 @@ pub mod resource_guard;
 pub mod route_diversity_checker;
 pub mod runtime_audit;
 pub mod runtime_event_bridge;
+pub mod runtime_readiness_gate;
 pub mod secure_bootstrap;
 pub mod stream_assignment_table;
 pub mod stream_mux_v2;
