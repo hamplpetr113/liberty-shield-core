@@ -5,6 +5,7 @@ pub mod adaptive_cover;
 pub mod adaptive_path_rotation;
 pub mod alpha_runtime;
 pub mod alpha_to_beta_migration;
+pub mod android_vpn_bridge_contract;
 pub mod anti_correlation_scheduler;
 pub mod anti_correlation_timing;
 pub mod backpressure;
