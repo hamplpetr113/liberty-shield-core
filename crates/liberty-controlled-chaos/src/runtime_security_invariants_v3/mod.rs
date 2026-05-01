@@ -16,7 +16,7 @@ mod tests {
     use crate::android_vpn_bridge_contract::{
         PermissionState, TunnelState, VpnPacketIn, VpnRuntimeCommand, VpnRuntimeStatus,
     };
-    use crate::integrated_node_runtime::{IntegratedNodeRuntime, RuntimeState};
+    use crate::integrated_node_runtime::IntegratedNodeRuntime;
     use crate::link_crypto_provider::NullCryptoProvider;
     use crate::node_config::NodeConfig;
     use crate::outbound_send_queue::{OutboundSendQueue, OverflowPolicy, QueuedPacket};

@@ -177,7 +177,6 @@ impl OnionRelayRuntime {
 mod tests {
     use super::*;
     use crate::onion_cell_v2::{CMD_DATA, OnionCellV2};
-    use crate::policy_engine::PolicyRule;
 
     fn nid(b: u8) -> [u8; 32] {
         [b; 32]

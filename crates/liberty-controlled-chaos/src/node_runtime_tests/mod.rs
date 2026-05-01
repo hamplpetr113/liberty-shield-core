@@ -14,7 +14,7 @@
 #[cfg(test)]
 mod tests {
     use crate::circuit_manager::CircuitManagerError;
-    use crate::integrated_node_runtime::{IntegratedNodeRuntime, PacketDecision, RuntimeState};
+    use crate::integrated_node_runtime::{IntegratedNodeRuntime, RuntimeState};
     use crate::mesh_session_store::MeshSession;
     use crate::node_config::NodeConfig;
     use crate::onion_cell_v2::{CMD_DATA, PAYLOAD_SIZE};

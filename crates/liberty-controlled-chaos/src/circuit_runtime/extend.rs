@@ -419,8 +419,8 @@ mod tests {
     // MH7: different extend nonces produce different extended keys.
     #[test]
     fn mh7_different_nonces_differ() {
-        let (p_a1, _p_b1, mut p_c1) = three_hop_setup(7, 8, 70, 80);
-        let (p_a2, _p_b2, mut p_c2) = three_hop_setup(7, 8, 70, 81); // nonce_bc differs
+        let (p_a1, _p_b1, p_c1) = three_hop_setup(7, 8, 70, 80);
+        let (p_a2, _p_b2, p_c2) = three_hop_setup(7, 8, 70, 81); // nonce_bc differs
 
         let _ = (p_a2, p_c2); // Just check it compiles and the setup differs
         let _ = (p_a1, p_c1);
@@ -481,7 +481,7 @@ mod tests {
     // MH11: A–B and A–C circuits are independent (different keys, no cross-decrypt).
     #[test]
     fn mh11_circuits_are_independent() {
-        let (mut p_a, mut p_b, mut p_c) = three_hop_setup(13, 14, 130, 140);
+        let (mut p_a, p_b, mut p_c) = three_hop_setup(13, 14, 130, 140);
 
         // A sends on A–B circuit.
         let pt = RelayCellPlaintext::new(13, 1, RelayCellCommand::Data, 0, b"AB".to_vec());

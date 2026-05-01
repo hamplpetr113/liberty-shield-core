@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn dc10_body_changes_with_descriptor() {
         let auth = authority(0x1A);
-        let mut b1 = DirectoryConsensus::begin(&auth, 1, 0).unwrap();
+        let b1 = DirectoryConsensus::begin(&auth, 1, 0).unwrap();
         let doc_empty = b1.finalise(&auth);
 
         let mut b2 = DirectoryConsensus::begin(&auth, 1, 0).unwrap();

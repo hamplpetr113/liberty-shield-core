@@ -9,12 +9,10 @@
 mod tests {
     use crate::anti_correlation_timing::{TimingPolicy, TimingScheduler};
     use crate::backpressure::{BackpressureEngine, BackpressureLimits};
-    use crate::chaos_harness::{ChaosDecision, ChaosHarness, FaultKind};
+    use crate::chaos_harness::{ChaosDecision, ChaosHarness};
     use crate::deception_traffic::{DeceptionEngine, DeceptionLevel};
     use crate::mesh_packet_router::MeshPacketRouter;
-    use crate::policy_engine::{
-        PolicyAction, PolicyEngine, PolicyRequest, PolicyRule, TrafficClass,
-    };
+    use crate::policy_engine::{PolicyAction, PolicyEngine, PolicyRequest, PolicyRule};
     use crate::privacy_profiles::{PrivacyProfile, ProfileLevel};
     use crate::trust_risk_engine::TrustRiskEngine;
 

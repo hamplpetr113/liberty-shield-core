@@ -191,7 +191,7 @@ impl MeshNodeRuntime {
 mod tests {
     use super::*;
     use crate::onion_cell_v2::{CMD_DATA, OnionCellV2};
-    use crate::onion_relay_runtime::DropReason;
+
     use crate::policy_engine::{PolicyRule, TrafficClass};
     use crate::resource_guard::ResourceBudget;
     use crate::runtime_audit::AuditSeverity;

@@ -184,7 +184,7 @@ mod tests {
 
         // Observe raw bytes via a plain UdpSocket.
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut buf = [0u8; 256];
+        let buf = [0u8; 256];
         let client = bind_loopback();
         client.send(server_addr, b"abc").unwrap();
 

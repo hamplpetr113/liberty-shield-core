@@ -115,7 +115,7 @@ impl LinkCryptoProvider for NullCryptoProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::link_crypto_v2::{LinkFrame, LinkSession};
+    use crate::link_crypto_v2::LinkSession;
 
     fn make_hmac() -> HmacLinkCryptoProvider {
         let session = LinkSession::new([0xAAu8; 32], [0xBBu8; 32], 1000);

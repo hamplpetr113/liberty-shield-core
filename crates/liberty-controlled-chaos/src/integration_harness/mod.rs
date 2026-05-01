@@ -9,8 +9,8 @@ mod tests {
     use crate::circuit_runtime::CircuitRuntime;
     use crate::guard_selection::GuardSelector;
     use crate::mesh_router::{MeshRouter, Route, RouteId, RoutingTable};
-    use crate::noise_link::{ENCRYPTED_CELL_SIZE, NoiseLinkEncoder};
-    use crate::onion_layer::{LayerDecryptor, ONION_PACKET_SIZE};
+    use crate::noise_link::ENCRYPTED_CELL_SIZE;
+    use crate::onion_layer::ONION_PACKET_SIZE;
     use crate::protocol_runtime::{ProtocolAction, ProtocolEvent, ProtocolRuntime};
     use crate::relay_protocol::{RelayCapabilities, RelayDescriptor, RelayNodeId};
     use crate::udp_transport::PeerAddress;
@@ -229,8 +229,6 @@ mod tests {
 
     #[test]
     fn i10_payload_never_inspected() {
-        use crate::noise_link::EncryptedCell;
-
         // All-zero and all-ones payloads must produce the same structural output
         // (only the ciphertext and tag differ — but sizes are identical).
         let frame_a = make_stream_frame(10, 10, 64);

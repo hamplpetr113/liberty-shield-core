@@ -283,7 +283,7 @@ mod security_invariants {
     fn runtime_boundary_rejects_invalid_path() {
         use crate::runtime_boundary::{
             ControlledChaosOutput, KillSwitchState, PacketClass, PayloadRef,
-            RuntimeBoundaryValidator, RuntimeValidationResult, ShadowBudgetTracker, TunnelState,
+            RuntimeBoundaryValidator, ShadowBudgetTracker, TunnelState,
         };
         use std::collections::HashSet;
 
