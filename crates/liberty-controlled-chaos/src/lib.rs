@@ -173,6 +173,9 @@ pub mod invariant_tests;
 pub mod security_invariants_v2;
 
 #[cfg(test)]
+pub mod runtime_security_invariants_v3;
+
+#[cfg(test)]
 pub mod node_runtime_tests;
 
 #[cfg(test)]
