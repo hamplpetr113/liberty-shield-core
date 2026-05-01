@@ -47,6 +47,7 @@ pub mod encrypted_relay;
 pub mod epoch_scheduler;
 pub mod epoch_vote_collector;
 pub mod epoch_watermark;
+pub mod failure_recovery_runtime;
 pub mod flow_controller;
 pub mod gossip_cache;
 pub mod guard_selection;
