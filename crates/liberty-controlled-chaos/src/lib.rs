@@ -149,6 +149,7 @@ pub mod traffic_classifier;
 pub mod traffic_shaping;
 pub mod transmitter;
 pub mod transport;
+pub mod udp_flow_adapter;
 pub mod udp_transport;
 
 pub use route_shadower::{

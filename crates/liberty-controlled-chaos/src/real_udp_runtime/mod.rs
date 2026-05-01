@@ -84,6 +84,14 @@ impl RealUdpRuntime {
         self.peers.get(node_id).copied()
     }
 
+    /// Reverse lookup: find the node_id for a given socket address.
+    pub fn peer_id_by_addr(&self, addr: SocketAddr) -> Option<[u8; 32]> {
+        self.peers
+            .iter()
+            .find(|(_, a)| **a == addr)
+            .map(|(id, _)| *id)
+    }
+
     /// Send bytes to a known peer.
     pub fn send_to_peer(
         &mut self,
