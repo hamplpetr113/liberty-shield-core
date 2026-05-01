@@ -24,8 +24,12 @@ class PacketForwarder(
     private val tcpSessions = TcpSessionTable()
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
-    // We copy it here before handing off to a coroutine.
-    fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
+    // TCP is dispatched synchronously (suspend, no scope.launch) to guarantee FIFO packet order.
+    // Out-of-order dispatch via scope.launch caused silent drops: a later coroutine could advance
+    // relayAck past an earlier packet's data, which then looked like a retransmit and was skipped,
+    // corrupting the TLS stream (ERR_SSL_BAD_RECORD_MAC_ALERT).
+    // UDP remains fire-and-forget (scope.launch) because UDP is connectionless and order doesn't matter.
+    suspend fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
         if (packet.isIpv6) {
             Log.d(TAG, "DROP IPv6 (${len}B) — not relayed")
             return
@@ -33,8 +37,6 @@ class PacketForwarder(
         when (packet.protocol) {
             PacketParser.PROTO_UDP -> {
                 Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
-                // Snapshot buf NOW, before PacketReader overwrites it on the next TUN read.
-                // buf.copyOf() inside scope.launch evaluates lazily and races with the next read.
                 val packetBytes = buf.copyOf(len)
                 scope.launch { forwardUdp(packetBytes, len, packet) }
             }
@@ -42,7 +44,7 @@ class PacketForwarder(
                 val flags = if (buf.size > 33) buf[33].toInt() and 0xFF else 0
                 Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
                 val packetBytes = buf.copyOf(len)
-                scope.launch { dispatchTcp(packetBytes, packet) }
+                dispatchTcp(packetBytes, packet)   // synchronous — preserves TUN packet order
             }
             else -> Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled")
         }

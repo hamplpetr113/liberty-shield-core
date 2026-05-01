@@ -85,7 +85,10 @@ class TcpSession(
     private fun extractPayload(buf: ByteArray, seg: TcpSegment): ByteArray {
         if (seg.payloadLen == 0) return ByteArray(0)
         val end = minOf(seg.payloadOffset + seg.payloadLen, buf.size)
-        if (end <= seg.payloadOffset) return ByteArray(0)
+        if (end <= seg.payloadOffset) {
+            Log.w(TAG, "[4] EXTRACT EMPTY payloadLen=${seg.payloadLen} payloadOffset=${seg.payloadOffset} bufSize=${buf.size} end=$end ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} $srcIp:$srcPort→$dstIp:$dstPort")
+            return ByteArray(0)
+        }
         val payload = buf.copyOfRange(seg.payloadOffset, end)
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             val preview = if (payload.isNotEmpty()) payloadPreview(payload) else "(empty)"
@@ -275,15 +278,16 @@ class TcpSession(
                         offset += chunkLen
                         sessionMutex.withLock {
                             if (state != State.ESTABLISHED) return@withLock
+                            val seqBefore = relaySeq
                             // ── Point 7: packet built back to TUN ─────────────
-                            Log.d(TAG, "[7] BUILD DATA ${chunk.size}B $srcIp:$srcPort→$dstIp:$dstPort " +
-                                "relaySeq=$relaySeq relayAck=$relayAck " +
-                                "preview=${payloadPreview(chunk)}")
                             val pkt = TcpPacketBuilder.buildData(
                                 dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
                             )
                             send(pkt, "PSH|ACK data=${chunk.size}B")
                             relaySeq = mask32(relaySeq + chunk.size)
+                            Log.d(TAG, "[7] BUILD DATA ${chunk.size}B $srcIp:$srcPort→$dstIp:$dstPort " +
+                                "seqBefore=$seqBefore seqAfter=$relaySeq relayAck=$relayAck " +
+                                "preview=${payloadPreview(chunk)}")
                         }
                     }
                 }
