@@ -17,7 +17,8 @@
 
 use std::collections::HashMap;
 
-use crate::link_crypto_v2::{LinkCryptoError, LinkFrame, LinkSession};
+use crate::link_crypto_provider::{HmacLinkCryptoProvider, LinkCryptoProvider};
+use crate::link_crypto_v2::LinkSession;
 use crate::mesh_packet_framer::{FrameError, MeshPacketFramer};
 use crate::onion_cell_v2::{CELL_SIZE, OnionCellV2};
 use crate::onion_relay_runtime::{DropReason as RelayDropReason, OnionRelayRuntime, RouteDecision};
@@ -85,10 +86,10 @@ pub enum FlowDropReason {
 
 pub struct PacketFlowEngine {
     framer: MeshPacketFramer,
-    /// Receive-direction link sessions keyed by sender peer ID.
-    recv_sessions: HashMap<[u8; 32], LinkSession>,
-    /// Send-direction link sessions keyed by recipient peer ID.
-    send_sessions: HashMap<[u8; 32], LinkSession>,
+    /// Receive-direction crypto providers keyed by sender peer ID.
+    recv_providers: HashMap<[u8; 32], Box<dyn LinkCryptoProvider>>,
+    /// Send-direction crypto providers keyed by recipient peer ID.
+    send_providers: HashMap<[u8; 32], Box<dyn LinkCryptoProvider>>,
     relay: OnionRelayRuntime,
     policy: PolicyEngine,
     /// Outbound queue for packets pending delivery to the network layer.
@@ -105,8 +106,8 @@ impl PacketFlowEngine {
     pub fn new(local_id: [u8; 32]) -> Self {
         Self {
             framer: MeshPacketFramer::new(),
-            recv_sessions: HashMap::new(),
-            send_sessions: HashMap::new(),
+            recv_providers: HashMap::new(),
+            send_providers: HashMap::new(),
             relay: OnionRelayRuntime::new(local_id),
             policy: PolicyEngine::new(),
             outbound_queue: OutboundSendQueue::new(
@@ -119,19 +120,31 @@ impl PacketFlowEngine {
         }
     }
 
-    /// Register symmetric link sessions for a peer.
-    /// `send_key` / `send_recv_key` are used when we SEND to `peer_id`.
-    /// `recv_key` / `recv_recv_key` are used when we RECEIVE from `peer_id`.
+    /// Register HMAC-based link sessions for a peer (convenience wrapper).
     pub fn register_peer_session(
         &mut self,
         peer_id: [u8; 32],
         send_key: [u8; 32],
         recv_key: [u8; 32],
     ) {
-        self.send_sessions
-            .insert(peer_id, LinkSession::new(send_key, recv_key, 0));
-        self.recv_sessions
-            .insert(peer_id, LinkSession::new(recv_key, send_key, 0));
+        let send_session = LinkSession::new(send_key, recv_key, 0);
+        let recv_session = LinkSession::new(recv_key, send_key, 0);
+        self.send_providers
+            .insert(peer_id, Box::new(HmacLinkCryptoProvider::new(send_session)));
+        self.recv_providers
+            .insert(peer_id, Box::new(HmacLinkCryptoProvider::new(recv_session)));
+    }
+
+    /// Register custom crypto providers for a peer (allows injecting NullCryptoProvider
+    /// or future Noise XX providers in tests and production).
+    pub fn register_peer_provider(
+        &mut self,
+        peer_id: [u8; 32],
+        send: Box<dyn LinkCryptoProvider>,
+        recv: Box<dyn LinkCryptoProvider>,
+    ) {
+        self.send_providers.insert(peer_id, send);
+        self.recv_providers.insert(peer_id, recv);
     }
 
     // -----------------------------------------------------------------------
@@ -164,41 +177,19 @@ impl PacketFlowEngine {
             }
         };
 
-        // 3. Deserialize LinkFrame: [8 seq][32 tag][payload]
-        if inner.len() < 40 {
-            self.drop_count += 1;
-            return PacketFlowResult::Dropped(FlowDropReason::MalformedFrame);
-        }
-        let sequence = u64::from_le_bytes(inner[..8].try_into().unwrap());
-        let auth_tag: [u8; 32] = inner[8..40].try_into().unwrap();
-        let payload = inner[40..].to_vec();
-        let link_frame = LinkFrame {
-            sequence,
-            payload,
-            auth_tag,
-        };
-
-        // 4. Link decrypt.
-        let recv_session = match self.recv_sessions.get_mut(&from_peer) {
-            Some(s) => s,
+        // 3. Link decrypt via provider.
+        let recv_provider = match self.recv_providers.get_mut(&from_peer) {
+            Some(p) => p,
             None => {
                 self.drop_count += 1;
                 return PacketFlowResult::Dropped(FlowDropReason::NoSession);
             }
         };
-        let cell_bytes = match recv_session.open(link_frame) {
-            Ok(b) => b,
-            Err(LinkCryptoError::AuthenticationFailure) => {
+        let cell_bytes = match recv_provider.open(&inner) {
+            Some(b) => b,
+            None => {
                 self.drop_count += 1;
                 return PacketFlowResult::Dropped(FlowDropReason::AuthFailed);
-            }
-            Err(LinkCryptoError::ReplayDetected) => {
-                self.drop_count += 1;
-                return PacketFlowResult::Dropped(FlowDropReason::LinkReplay);
-            }
-            Err(LinkCryptoError::RekeyRequired) => {
-                self.drop_count += 1;
-                return PacketFlowResult::Dropped(FlowDropReason::RekeyRequired);
             }
         };
 
@@ -257,27 +248,21 @@ impl PacketFlowEngine {
         // 1. Serialize cell.
         let cell_bytes = cell.to_bytes().to_vec();
 
-        // 2. Link encrypt.
-        let send_session = self
-            .send_sessions
+        // 2. Link encrypt via provider → [8 seq][32 tag][payload].
+        let send_provider = self
+            .send_providers
             .get_mut(&to_peer)
             .ok_or(FlowDropReason::NoSession)?;
 
-        let frame = send_session.seal(cell_bytes).map_err(|e| match e {
-            LinkCryptoError::RekeyRequired => FlowDropReason::RekeyRequired,
-            _ => FlowDropReason::AuthFailed,
-        })?;
+        let sealed = send_provider.seal(&cell_bytes);
+        if sealed.is_empty() {
+            return Err(FlowDropReason::AuthFailed);
+        }
 
-        // 3. Serialize LinkFrame: [8 seq][32 tag][payload].
-        let mut serialized = Vec::with_capacity(8 + 32 + frame.payload.len());
-        serialized.extend_from_slice(&frame.sequence.to_le_bytes());
-        serialized.extend_from_slice(&frame.auth_tag);
-        serialized.extend_from_slice(&frame.payload);
-
-        // 4. Frame encode.
+        // 3. Frame encode.
         let wire_bytes = self
             .framer
-            .encode(&serialized)
+            .encode(&sealed)
             .map_err(|_| FlowDropReason::MalformedFrame)?;
 
         self.outbound_count += 1;
@@ -504,5 +489,70 @@ mod tests {
         engine.enqueue_send_intent(lid(0xAB), &cell).unwrap();
         let pkt = engine.poll_outbound().unwrap();
         assert_eq!(pkt.peer_id, lid(0xAB));
+    }
+
+    // PFE11: register_peer_provider with NullCryptoProvider round-trips.
+    #[test]
+    fn pfe11_null_provider_round_trip() {
+        use crate::link_crypto_provider::NullCryptoProvider;
+        let mut sender = make_engine(11);
+        let mut receiver = make_engine(12);
+
+        sender.register_peer_provider(
+            lid(12),
+            Box::new(NullCryptoProvider),
+            Box::new(NullCryptoProvider),
+        );
+        receiver.register_peer_provider(
+            lid(11),
+            Box::new(NullCryptoProvider),
+            Box::new(NullCryptoProvider),
+        );
+        receiver.relay_mut().register_circuit(1, None);
+
+        let cell = make_cell(1, 0);
+        let intent = sender.build_send_intent(lid(12), &cell).unwrap();
+        let result = receiver.process_inbound(lid(11), &intent.wire_bytes);
+        assert_eq!(result, PacketFlowResult::DeliveredLocal { circuit_id: 0 });
+    }
+
+    // PFE12: no send provider returns NoSession.
+    #[test]
+    fn pfe12_no_send_provider_returns_no_session() {
+        let mut engine = make_engine(13);
+        let cell = make_cell(1, 0);
+        let err = engine.build_send_intent(lid(99), &cell).unwrap_err();
+        assert_eq!(err, FlowDropReason::NoSession);
+    }
+
+    // PFE13: register_peer_session creates HMAC provider that can round-trip.
+    // Both sides must register with IDENTICAL key args (not swapped).
+    #[test]
+    fn pfe13_hmac_provider_round_trip() {
+        let mut sender = make_engine(14);
+        let mut receiver = make_engine(15);
+
+        sender.register_peer_session(lid(15), lid(0xAA), lid(0xBB));
+        receiver.register_peer_session(lid(14), lid(0xAA), lid(0xBB));
+        receiver.relay_mut().register_circuit(7, None);
+
+        let cell = make_cell(7, 0);
+        let intent = sender.build_send_intent(lid(15), &cell).unwrap();
+        let result = receiver.process_inbound(lid(14), &intent.wire_bytes);
+        assert_eq!(result, PacketFlowResult::DeliveredLocal { circuit_id: 0 });
+    }
+
+    // PFE14: drop_count increments on NoSession from inbound path.
+    #[test]
+    fn pfe14_drop_count_on_no_session() {
+        let mut engine = make_engine(16);
+        let framed = {
+            let inner = vec![0u8; 50];
+            let mut v = (inner.len() as u32).to_le_bytes().to_vec();
+            v.extend_from_slice(&inner);
+            v
+        };
+        engine.process_inbound(lid(99), &framed);
+        assert_eq!(engine.drop_count(), 1);
     }
 }
