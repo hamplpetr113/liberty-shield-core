@@ -123,6 +123,7 @@ pub mod reliability;
 pub mod resource_guard;
 pub mod route_diversity_checker;
 pub mod runtime_audit;
+pub mod runtime_epoch_driver;
 pub mod runtime_event_bridge;
 pub mod runtime_readiness_gate;
 pub mod secure_bootstrap;
