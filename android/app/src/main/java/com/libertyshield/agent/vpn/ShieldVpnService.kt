@@ -100,6 +100,7 @@ class ShieldVpnService : VpnService() {
                 .addAddress("10.0.0.2", 32)
                 .addRoute("0.0.0.0", 0)
                 .addDnsServer("8.8.8.8")
+                .addDnsServer("1.1.1.1")
                 .setMtu(1500)
                 .addDisallowedApplication(packageName)
                 .establish()
@@ -183,7 +184,7 @@ class ShieldVpnService : VpnService() {
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            startForeground(NOTIF_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIF_ID, notification)
         }

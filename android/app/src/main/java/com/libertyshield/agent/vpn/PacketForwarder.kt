@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -50,9 +51,7 @@ class PacketForwarder(
         try {
             DatagramSocket().use { socket ->
                 if (!vpnService.protect(socket)) {
-                    // protect() failed — sending would loop back into our own VPN
-                    Log.w(TAG, "UDP protect() failed — dropping ${packet.dstIp}:${packet.dstPort}")
-                    return  // use{} finally block closes the socket
+                    throw IOException("protect() failed for UDP ${packet.dstIp}:${packet.dstPort}")
                 }
                 socket.soTimeout = SOCKET_TIMEOUT_MS
 

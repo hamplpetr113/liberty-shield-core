@@ -27,7 +27,8 @@ class PacketReader(
         try {
             while (true) {
                 val len = stream.read(buf)
-                if (len <= 0) break
+                if (len < 0) break          // -1 = TUN fd closed, exit cleanly
+                if (len == 0) continue      // EAGAIN on non-blocking fd — no packet yet
                 val packet = parser.parse(buf, len) ?: continue
                 emitTelemetry(packet)
                 forwarder.forward(buf, len, packet)  // must forward to keep connectivity

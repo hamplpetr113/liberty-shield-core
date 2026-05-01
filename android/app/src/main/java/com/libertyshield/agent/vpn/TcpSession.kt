@@ -37,7 +37,7 @@ class TcpSession(
         sessionMutex.withLock {
             when (state) {
                 State.CLOSED       -> handleClosed(seg)
-                State.SYN_RECEIVED -> handleSynReceived(seg)
+                State.SYN_RECEIVED -> handleSynReceived(seg, buf)
                 State.ESTABLISHED  -> handleEstablished(seg, buf)
                 State.FIN_WAIT     -> teardown()
                 State.CLOSED_FINAL -> Unit
@@ -73,7 +73,9 @@ class TcpSession(
     private fun extractPayload(buf: ByteArray): ByteArray {
         val seg = parseTcpSegment(buf) ?: return ByteArray(0)
         if (seg.payloadLen == 0) return ByteArray(0)
-        return buf.copyOfRange(seg.payloadOffset, seg.payloadOffset + seg.payloadLen)
+        val end = minOf(seg.payloadOffset + seg.payloadLen, buf.size)
+        if (end <= seg.payloadOffset) return ByteArray(0)
+        return buf.copyOfRange(seg.payloadOffset, end)
     }
 
     private fun ipHdrLen(buf: ByteArray): Int = (buf[0].toInt() and 0x0F) * 4
@@ -116,7 +118,11 @@ class TcpSession(
         relayAck = mask32(seg.seq + 1)
         try {
             val sock = Socket()
+            // Socket() is lazy on Android — the kernel fd is not allocated until bind/connect.
+            // protect() reads the fd; calling it before bind() returns false every time.
+            sock.bind(InetSocketAddress(0))
             if (!vpnService.protect(sock)) {
+                Log.w(TAG, "TCP protect() failed for $dstIp:$dstPort")
                 sock.close()
                 send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true))
                 teardown()
@@ -125,20 +131,24 @@ class TcpSession(
             sock.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
             server = sock
             state = State.SYN_RECEIVED
+            Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort->$dstIp:$dstPort")
             send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
             relaySeq = mask32(relaySeq + 1)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "TCP connect failed $dstIp:$dstPort: ${e::class.java.simpleName}: ${e.message}")
             send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true))
             teardown()
         }
     }
 
-    private suspend fun handleSynReceived(seg: TcpSegment) {
+    private suspend fun handleSynReceived(seg: TcpSegment, buf: ByteArray) {
         when {
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
             seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
                 state = State.ESTABLISHED
+                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort->$dstIp:$dstPort")
                 startServerReader()
+                handleEstablished(seg, buf)  // forward any piggybacked payload (e.g. TLS ClientHello)
             }
         }
     }
@@ -156,6 +166,7 @@ class TcpSession(
                 val payload = extractPayload(buf)
                 if (payload.isNotEmpty()) {
                     relayAck = mask32(seg.seq + payload.size)
+                    Log.d(TAG, "c→s ${payload.size}B $srcIp:$srcPort->$dstIp:$dstPort")
                     forwardToServer(payload)
                     send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
                 }
@@ -182,6 +193,7 @@ class TcpSession(
                     val chunk = readBuf.copyOf(n)
                     sessionMutex.withLock {
                         if (state != State.ESTABLISHED) return@withLock
+                        Log.d(TAG, "s→c ${chunk.size}B $srcIp:$srcPort->$dstIp:$dstPort")
                         val pkt = TcpPacketBuilder.buildData(
                             dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
                         )
@@ -202,6 +214,7 @@ class TcpSession(
     }
 
     private fun teardown() {
+        if (state == State.CLOSED_FINAL) return
         state = State.CLOSED_FINAL
         serverJob?.cancel()
         serverJob = null
