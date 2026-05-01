@@ -33,12 +33,16 @@ class PacketForwarder(
         when (packet.protocol) {
             PacketParser.PROTO_UDP -> {
                 Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
-                scope.launch { forwardUdp(buf.copyOf(len), len, packet) }
+                // Snapshot buf NOW, before PacketReader overwrites it on the next TUN read.
+                // buf.copyOf() inside scope.launch evaluates lazily and races with the next read.
+                val packetBytes = buf.copyOf(len)
+                scope.launch { forwardUdp(packetBytes, len, packet) }
             }
             PacketParser.PROTO_TCP -> {
                 val flags = if (buf.size > 33) buf[33].toInt() and 0xFF else 0
                 Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
-                scope.launch { dispatchTcp(buf.copyOf(len), packet) }
+                val packetBytes = buf.copyOf(len)
+                scope.launch { dispatchTcp(packetBytes, packet) }
             }
             else -> Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled")
         }
