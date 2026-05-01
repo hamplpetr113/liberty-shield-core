@@ -1,5 +1,6 @@
 package com.libertyshield.agent.vpn
 
+import android.util.Log
 import com.libertyshield.agent.GatewayClient
 import com.libertyshield.agent.models.SensorEvent
 import java.io.FileInputStream
@@ -24,17 +25,28 @@ class PacketReader(
     private val rateLimiter = RateLimiter(maxPerWindow = 50)
 
     suspend fun run() {
+        Log.i(TAG, "PacketReader started — reading TUN")
         try {
             while (true) {
                 val len = stream.read(buf)
-                if (len < 0) break          // -1 = TUN fd closed, exit cleanly
+                if (len < 0) { Log.i(TAG, "TUN read returned -1 — fd closed"); break }
                 if (len == 0) continue      // EAGAIN on non-blocking fd — no packet yet
-                val packet = parser.parse(buf, len) ?: continue
+                val packet = parser.parse(buf, len)
+                if (packet == null) {
+                    Log.d(TAG, "TUN pkt ${len}B → parser returned null (too short/malformed)")
+                    continue
+                }
+                val proto = if (packet.isIpv6) "IPv6" else when (packet.protocol) {
+                    PacketParser.PROTO_TCP -> "TCP"
+                    PacketParser.PROTO_UDP -> "UDP"
+                    else -> "proto=${packet.protocol}"
+                }
+                Log.d(TAG, "TUN pkt ${len}B $proto ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${packet.tcpFlags.toString(16)}")
                 emitTelemetry(packet)
-                forwarder.forward(buf, len, packet)  // must forward to keep connectivity
+                forwarder.forward(buf, len, packet)
             }
         } catch (_: IOException) {
-            // TUN fd closed — VPN is stopping, exit cleanly
+            Log.i(TAG, "PacketReader exited via IOException — VPN stopping")
         }
     }
 

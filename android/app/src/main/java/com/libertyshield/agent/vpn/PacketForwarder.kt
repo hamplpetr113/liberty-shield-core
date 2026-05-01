@@ -26,13 +26,21 @@ class PacketForwarder(
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
     // We copy it here before handing off to a coroutine.
     fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
-        if (packet.isIpv6) return
+        if (packet.isIpv6) {
+            Log.d(TAG, "DROP IPv6 (${len}B) — not relayed")
+            return
+        }
         when (packet.protocol) {
-            PacketParser.PROTO_UDP ->
+            PacketParser.PROTO_UDP -> {
+                Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
                 scope.launch { forwardUdp(buf.copyOf(len), len, packet) }
-            PacketParser.PROTO_TCP ->
+            }
+            PacketParser.PROTO_TCP -> {
+                val flags = if (buf.size > 33) buf[33].toInt() and 0xFF else 0
+                Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
                 scope.launch { dispatchTcp(buf.copyOf(len), packet) }
-            else -> {}
+            }
+            else -> Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled")
         }
     }
 

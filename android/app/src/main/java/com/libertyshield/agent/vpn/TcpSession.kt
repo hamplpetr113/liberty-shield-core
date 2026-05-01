@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -28,12 +29,18 @@ class TcpSession(
     private val sessionMutex = Mutex()
     private var state: State = State.CLOSED
     private var server: Socket? = null
+    private var serverOut: OutputStream? = null
     private var serverJob: Job? = null
     private var relaySeq: Long = 0L
     private var relayAck: Long = 0L
 
     suspend fun handle(buf: ByteArray) {
         val seg = parseTcpSegment(buf) ?: return
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "PKT $srcIp:$srcPort->$dstIp:$dstPort " +
+                "flags=0x${seg.flags.toString(16)} seq=${seg.seq} ack=${seg.ack} " +
+                "payloadLen=${seg.payloadLen} state=$state")
+        }
         sessionMutex.withLock {
             when (state) {
                 State.CLOSED       -> handleClosed(seg)
@@ -128,8 +135,10 @@ class TcpSession(
                 teardown()
                 return
             }
+            sock.tcpNoDelay = true    // disable Nagle — critical for TLS handshake latency
             sock.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
             server = sock
+            serverOut = sock.getOutputStream()
             state = State.SYN_RECEIVED
             Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort->$dstIp:$dstPort")
             send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
@@ -146,17 +155,27 @@ class TcpSession(
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
             seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
                 state = State.ESTABLISHED
-                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort->$dstIp:$dstPort")
+                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort->$dstIp:$dstPort payloadLen=${seg.payloadLen}")
                 startServerReader()
-                handleEstablished(seg, buf)  // forward any piggybacked payload (e.g. TLS ClientHello)
+                // Forward any piggybacked payload (e.g. TLS ClientHello on ACK)
+                if (seg.payloadLen > 0) {
+                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort->$dstIp:$dstPort")
+                } else {
+                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK (no payload) — awaiting ClientHello")
+                }
+                handleEstablished(seg, buf)
             }
         }
     }
 
     private suspend fun handleEstablished(seg: TcpSegment, buf: ByteArray) {
         when {
-            seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
+            seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> {
+                Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort->$dstIp:$dstPort")
+                teardown()
+            }
             seg.flags and TcpPacketBuilder.FLAG_FIN != 0 -> {
+                Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort->$dstIp:$dstPort")
                 relayAck = mask32(seg.seq + 1)
                 send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
                 relaySeq = mask32(relaySeq + 1)
@@ -166,9 +185,11 @@ class TcpSession(
                 val payload = extractPayload(buf)
                 if (payload.isNotEmpty()) {
                     relayAck = mask32(seg.seq + payload.size)
-                    Log.d(TAG, "c→s ${payload.size}B $srcIp:$srcPort->$dstIp:$dstPort")
+                    Log.d(TAG, "c→s ${payload.size}B flags=0x${seg.flags.toString(16)} seq=${seg.seq} $srcIp:$srcPort->$dstIp:$dstPort")
                     forwardToServer(payload)
                     send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck))
+                } else {
+                    Log.d(TAG, "c→s 0B (pure ACK) flags=0x${seg.flags.toString(16)} seq=${seg.seq} $srcIp:$srcPort->$dstIp:$dstPort")
                 }
             }
         }
@@ -176,8 +197,15 @@ class TcpSession(
 
     private fun forwardToServer(data: ByteArray) {
         try {
-            server?.getOutputStream()?.write(data)
-        } catch (_: Exception) {
+            val out = serverOut ?: run {
+                Log.e(TAG, "forwardToServer: serverOut is null — dropping ${data.size}B $srcIp:$srcPort->$dstIp:$dstPort")
+                return
+            }
+            out.write(data)
+            out.flush()   // ensure Nagle algorithm doesn't delay TLS handshake bytes
+            Log.d(TAG, "forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
+        } catch (e: Exception) {
+            Log.w(TAG, "forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
             teardown()
         }
     }
@@ -218,6 +246,7 @@ class TcpSession(
         state = State.CLOSED_FINAL
         serverJob?.cancel()
         serverJob = null
+        serverOut = null
         runCatching { server?.close() }
         server = null
         Log.d(TAG, "torn down $srcIp:$srcPort->$dstIp:$dstPort")
