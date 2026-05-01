@@ -90,6 +90,7 @@ pub mod onion_cell_protocol;
 pub mod onion_cell_v2;
 pub mod onion_layer;
 pub mod onion_relay_runtime;
+pub mod packet_flow_engine;
 pub mod packet_sequence_tracker;
 pub mod padding_budget;
 pub mod padding_scheduler;
