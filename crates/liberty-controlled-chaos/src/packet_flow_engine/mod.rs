@@ -21,6 +21,7 @@ use crate::link_crypto_v2::{LinkCryptoError, LinkFrame, LinkSession};
 use crate::mesh_packet_framer::{FrameError, MeshPacketFramer};
 use crate::onion_cell_v2::{CELL_SIZE, OnionCellV2};
 use crate::onion_relay_runtime::{DropReason as RelayDropReason, OnionRelayRuntime, RouteDecision};
+use crate::outbound_send_queue::{OutboundSendQueue, OverflowPolicy, QueuedPacket};
 use crate::policy_engine::{PolicyAction, PolicyEngine, PolicyRequest};
 
 // ---------------------------------------------------------------------------
@@ -90,12 +91,17 @@ pub struct PacketFlowEngine {
     send_sessions: HashMap<[u8; 32], LinkSession>,
     relay: OnionRelayRuntime,
     policy: PolicyEngine,
+    /// Outbound queue for packets pending delivery to the network layer.
+    outbound_queue: OutboundSendQueue,
     inbound_count: u64,
     outbound_count: u64,
     drop_count: u64,
 }
 
 impl PacketFlowEngine {
+    /// Default outbound queue capacity.
+    pub const DEFAULT_QUEUE_CAPACITY: usize = 256;
+
     pub fn new(local_id: [u8; 32]) -> Self {
         Self {
             framer: MeshPacketFramer::new(),
@@ -103,6 +109,10 @@ impl PacketFlowEngine {
             send_sessions: HashMap::new(),
             relay: OnionRelayRuntime::new(local_id),
             policy: PolicyEngine::new(),
+            outbound_queue: OutboundSendQueue::new(
+                Self::DEFAULT_QUEUE_CAPACITY,
+                OverflowPolicy::DropOldest,
+            ),
             inbound_count: 0,
             outbound_count: 0,
             drop_count: 0,
@@ -277,6 +287,28 @@ impl PacketFlowEngine {
         })
     }
 
+    /// Build a `SendIntent` and immediately enqueue it in the outbound queue.
+    /// Returns `Ok(())` on success; errors from `build_send_intent` propagate.
+    pub fn enqueue_send_intent(
+        &mut self,
+        to_peer: [u8; 32],
+        cell: &OnionCellV2,
+    ) -> Result<(), FlowDropReason> {
+        let intent = self.build_send_intent(to_peer, cell)?;
+        let queued = QueuedPacket {
+            peer_id: intent.peer_id,
+            wire_bytes: intent.wire_bytes,
+        };
+        // DropOldest policy — overflow is non-fatal; queue silently drops oldest.
+        let _ = self.outbound_queue.push(queued);
+        Ok(())
+    }
+
+    /// Poll one packet from the outbound queue. Returns `None` if empty.
+    pub fn poll_outbound(&mut self) -> Option<QueuedPacket> {
+        self.outbound_queue.pop().ok()
+    }
+
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------
@@ -286,6 +318,12 @@ impl PacketFlowEngine {
     }
     pub fn policy_mut(&mut self) -> &mut PolicyEngine {
         &mut self.policy
+    }
+    pub fn outbound_queue(&self) -> &OutboundSendQueue {
+        &self.outbound_queue
+    }
+    pub fn outbound_queue_mut(&mut self) -> &mut OutboundSendQueue {
+        &mut self.outbound_queue
     }
     pub fn inbound_count(&self) -> u64 {
         self.inbound_count
@@ -407,5 +445,64 @@ mod tests {
             result,
             PacketFlowResult::Dropped(FlowDropReason::MalformedFrame)
         );
+    }
+
+    // PFE6: enqueue_send_intent places item in outbound queue.
+    #[test]
+    fn pfe6_enqueue_creates_queue_item() {
+        let mut engine = make_engine(6);
+        engine.register_peer_session(lid(9), lid(0xAA), lid(0xBB));
+
+        let cell = make_cell(1, 0);
+        engine.enqueue_send_intent(lid(9), &cell).unwrap();
+        assert_eq!(engine.outbound_queue().len(), 1);
+    }
+
+    // PFE7: poll_outbound returns enqueued item.
+    #[test]
+    fn pfe7_poll_returns_item() {
+        let mut engine = make_engine(7);
+        engine.register_peer_session(lid(9), lid(0xAA), lid(0xBB));
+
+        let cell = make_cell(1, 0);
+        engine.enqueue_send_intent(lid(9), &cell).unwrap();
+        let pkt = engine.poll_outbound().expect("should have packet");
+        assert_eq!(pkt.peer_id, lid(9));
+        assert!(!pkt.wire_bytes.is_empty());
+    }
+
+    // PFE8: poll_outbound on empty queue returns None.
+    #[test]
+    fn pfe8_poll_empty_returns_none() {
+        let mut engine = make_engine(8);
+        assert!(engine.poll_outbound().is_none());
+    }
+
+    // PFE9: outbound queue drops oldest on overflow (DropOldest policy).
+    #[test]
+    fn pfe9_queue_overflow_drops_oldest() {
+        let mut engine = make_engine(9);
+        engine.register_peer_session(lid(10), lid(0xAA), lid(0xBB));
+        // Overfill the queue beyond DEFAULT_QUEUE_CAPACITY.
+        for seq in 0u64..PacketFlowEngine::DEFAULT_QUEUE_CAPACITY as u64 + 2 {
+            let cell = make_cell(1, seq);
+            engine.enqueue_send_intent(lid(10), &cell).unwrap();
+        }
+        assert_eq!(
+            engine.outbound_queue().len(),
+            PacketFlowEngine::DEFAULT_QUEUE_CAPACITY
+        );
+        assert!(engine.outbound_queue().dropped_count() > 0);
+    }
+
+    // PFE10: peer destination preserved through enqueue/poll.
+    #[test]
+    fn pfe10_peer_destination_preserved() {
+        let mut engine = make_engine(10);
+        engine.register_peer_session(lid(0xAB), lid(0xAA), lid(0xBB));
+        let cell = make_cell(5, 0);
+        engine.enqueue_send_intent(lid(0xAB), &cell).unwrap();
+        let pkt = engine.poll_outbound().unwrap();
+        assert_eq!(pkt.peer_id, lid(0xAB));
     }
 }
