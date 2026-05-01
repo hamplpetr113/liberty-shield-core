@@ -103,6 +103,11 @@ impl RuntimeEpochDriver {
         self.subscribers.remove(&id.0).is_some()
     }
 
+    /// Force-set the epoch without notifying subscribers (for initialization/sync).
+    pub fn set_epoch(&mut self, epoch: u64) {
+        self.epoch = epoch;
+    }
+
     /// Advance by exactly one epoch, notifying all subscribers.
     pub fn tick(&mut self) {
         self.tick_by(1);

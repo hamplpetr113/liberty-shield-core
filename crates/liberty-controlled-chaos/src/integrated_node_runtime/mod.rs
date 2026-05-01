@@ -24,6 +24,9 @@ use crate::peer_handshake_runtime::PeerHandshakeRuntime;
 use crate::policy_engine::{PolicyAction, PolicyEngine, PolicyRequest, TrafficClass};
 use crate::resource_guard::{ResourceError, ResourceGuard};
 use crate::runtime_audit::{AuditEventKind, AuditSeverity, RuntimeAuditLog};
+use crate::runtime_epoch_driver::{
+    EpochDriverConfig, EpochSubscriber, RuntimeEpochDriver, SubscriberId,
+};
 use crate::stream_mux_v2::StreamMuxV2;
 
 // ---------------------------------------------------------------------------
@@ -103,6 +106,7 @@ pub struct IntegratedNodeRuntime {
     policy: PolicyEngine,
     guard: ResourceGuard,
     current_epoch: u64,
+    epoch_driver: RuntimeEpochDriver,
 }
 
 impl IntegratedNodeRuntime {
@@ -125,6 +129,7 @@ impl IntegratedNodeRuntime {
             audit: RuntimeAuditLog::new(4096),
             policy: PolicyEngine::new(),
             guard: ResourceGuard::new(budget),
+            epoch_driver: RuntimeEpochDriver::new(EpochDriverConfig::default()),
             config,
             state: RuntimeState::New,
             current_epoch: 0,
@@ -163,6 +168,7 @@ impl IntegratedNodeRuntime {
             return Err(RuntimeError::WrongState(self.state));
         }
         self.current_epoch = epoch;
+        self.epoch_driver.set_epoch(epoch);
         self.state = RuntimeState::Running;
         self.audit.append(
             epoch,
@@ -334,6 +340,36 @@ impl IntegratedNodeRuntime {
         }
         self.telemetry
             .set_circuits_active(self.circuits.len() as u64);
+    }
+
+    // -----------------------------------------------------------------------
+    // Epoch driver integration
+    // -----------------------------------------------------------------------
+
+    /// Attach an external subscriber to the internal epoch driver.
+    pub fn subscribe_epoch(&mut self, sub: Box<dyn EpochSubscriber>) -> SubscriberId {
+        self.epoch_driver.subscribe(sub)
+    }
+
+    /// Detach a previously attached subscriber.
+    pub fn unsubscribe_epoch(&mut self, id: SubscriberId) -> bool {
+        self.epoch_driver.unsubscribe(id)
+    }
+
+    /// Advance the epoch clock by `n` ticks via the driver.
+    ///
+    /// Each tick fires all subscribers, then runs `advance_epoch` on the
+    /// runtime subsystems.
+    pub fn advance_epoch_driven(&mut self, n: u64) {
+        for _ in 0..n {
+            self.epoch_driver.tick();
+            let new_epoch = self.epoch_driver.epoch();
+            self.advance_epoch(new_epoch);
+        }
+    }
+
+    pub fn epoch_driver(&self) -> &RuntimeEpochDriver {
+        &self.epoch_driver
     }
 
     // -----------------------------------------------------------------------
@@ -513,5 +549,86 @@ mod tests {
         });
         let result = rt.ingest_packet(&packet(99, 0), 1).unwrap();
         assert_eq!(result, PacketDecision::PolicyDenied);
+    }
+
+    // INR11: advance_epoch_driven advances current_epoch.
+    #[test]
+    fn inr11_driven_epoch_advances() {
+        let mut rt = started_runtime(1);
+        assert_eq!(rt.current_epoch(), 1);
+        rt.advance_epoch_driven(3);
+        assert_eq!(rt.current_epoch(), 4);
+    }
+
+    // INR12: epoch_driver() epoch matches current_epoch after advance_epoch_driven.
+    #[test]
+    fn inr12_driver_epoch_consistent() {
+        let mut rt = started_runtime(1);
+        rt.advance_epoch_driven(5);
+        // driver starts at bootstrap epoch 1; after 5 ticks it's at 6
+        assert_eq!(rt.epoch_driver().epoch(), 6);
+        assert_eq!(rt.current_epoch(), 6);
+    }
+
+    // INR13: subscriber attached to runtime is notified per tick.
+    #[test]
+    fn inr13_subscriber_notified_via_runtime() {
+        struct Counter(u64);
+        impl EpochSubscriber for Counter {
+            fn on_epoch(&mut self, _e: u64) {
+                self.0 += 1;
+            }
+            fn name(&self) -> &str {
+                "counter"
+            }
+        }
+        let mut rt = started_runtime(2);
+        rt.subscribe_epoch(Box::new(Counter(0)));
+        rt.advance_epoch_driven(4);
+        assert_eq!(rt.epoch_driver().metrics().total_subscriber_calls, 4);
+    }
+
+    // INR14: unsubscribe stops notifications.
+    #[test]
+    fn inr14_unsubscribe_stops_notifications() {
+        struct Counter;
+        impl EpochSubscriber for Counter {
+            fn on_epoch(&mut self, _e: u64) {}
+            fn name(&self) -> &str {
+                "c"
+            }
+        }
+        let mut rt = started_runtime(3);
+        let id = rt.subscribe_epoch(Box::new(Counter));
+        rt.advance_epoch_driven(2);
+        assert_eq!(rt.epoch_driver().metrics().total_subscriber_calls, 2);
+        rt.unsubscribe_epoch(id);
+        rt.advance_epoch_driven(3);
+        assert_eq!(rt.epoch_driver().metrics().total_subscriber_calls, 2);
+    }
+
+    // INR15: advance_epoch_driven with n=0 is a no-op.
+    #[test]
+    fn inr15_zero_ticks_noop() {
+        let mut rt = started_runtime(4);
+        let epoch_before = rt.current_epoch();
+        rt.advance_epoch_driven(0);
+        assert_eq!(rt.current_epoch(), epoch_before);
+    }
+
+    // INR16: circuits expired by advance_epoch_driven; audit records CircuitTornDown.
+    #[test]
+    fn inr16_circuits_expire_via_driven() {
+        let mut rt = started_runtime(5);
+        rt.open_circuit(node_id(10), node_id(11), node_id(12), 1)
+            .unwrap();
+        let idle = rt.config.rotation.idle_rotation_epochs + 10;
+        rt.advance_epoch_driven(idle);
+        let events = rt.audit().events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == AuditEventKind::CircuitTornDown)
+        );
     }
 }
