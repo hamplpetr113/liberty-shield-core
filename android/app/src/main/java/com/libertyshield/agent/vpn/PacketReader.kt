@@ -80,6 +80,7 @@ class PacketReader(
     }
 
     companion object {
+        private const val TAG       = "PacketReader"
         private const val TCP_SYN   = 0x02
         private const val MAX_CACHE = 1_024
     }

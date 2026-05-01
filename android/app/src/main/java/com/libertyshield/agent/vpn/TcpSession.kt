@@ -218,15 +218,24 @@ class TcpSession(
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
-                    val chunk = readBuf.copyOf(n)
-                    sessionMutex.withLock {
-                        if (state != State.ESTABLISHED) return@withLock
-                        Log.d(TAG, "s→c ${chunk.size}B $srcIp:$srcPort->$dstIp:$dstPort")
-                        val pkt = TcpPacketBuilder.buildData(
-                            dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
-                        )
-                        send(pkt)
-                        relaySeq = mask32(relaySeq + chunk.size)
+                    // Split into MSS-sized chunks so every IP packet stays within the
+                    // TUN MTU (1500).  A single inp.read() can return up to READ_BUFFER_SIZE
+                    // bytes; building one oversized packet from that causes EMSGSIZE on the
+                    // tunOut.write() and silently tears down the session.
+                    var offset = 0
+                    while (offset < n) {
+                        val chunkLen = minOf(MSS, n - offset)
+                        val chunk = readBuf.copyOfRange(offset, offset + chunkLen)
+                        offset += chunkLen
+                        sessionMutex.withLock {
+                            if (state != State.ESTABLISHED) return@withLock
+                            Log.d(TAG, "s→c ${chunk.size}B $srcIp:$srcPort->$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
+                            val pkt = TcpPacketBuilder.buildData(
+                                dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
+                            )
+                            send(pkt)
+                            relaySeq = mask32(relaySeq + chunk.size)
+                        }
                     }
                 }
             } catch (_: Exception) { }
@@ -256,7 +265,8 @@ class TcpSession(
     companion object {
         private const val TAG                = "TcpSession"
         private const val CONNECT_TIMEOUT_MS = 5_000
-        private const val READ_BUFFER_SIZE   = 4_096
+        private const val READ_BUFFER_SIZE   = 32_768
+        private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"
