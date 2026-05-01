@@ -35,11 +35,6 @@ pub struct ThreatScore {
     last_event: Option<Instant>,
 }
 
-pub trait Sensor: Send + 'static {
-    fn name(&self) -> &str;
-    fn run(self, tx: mpsc::Sender<SensorEvent>);
-}
-
 pub trait Detector: Send + Sync {
     fn name(&self) -> &str;
     fn evaluate(&self, event: &SensorEvent) -> Option<ThreatAlert>;
@@ -55,7 +50,6 @@ pub struct PatternAlert {
 }
 
 pub trait AttackPattern: Send + Sync {
-    fn name(&self) -> &str;
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert>;
 }
 
@@ -132,10 +126,11 @@ impl ShieldEngine {
                 let crossed = {
                     let mut ts = self.score.lock().unwrap();
                     let now = Instant::now();
-                    if let Some(last) = ts.last_event {
-                        if now - last > self.attack_window {
-                            ts.score = 0;
-                        }
+                    if ts
+                        .last_event
+                        .is_some_and(|last| now - last > self.attack_window)
+                    {
+                        ts.score = 0;
                     }
                     ts.score += alert.score;
                     ts.last_event = Some(now);
@@ -180,10 +175,7 @@ impl ShieldEngine {
                 }
                 let mut ts = self.score.lock().unwrap();
                 let now = Instant::now();
-                if ts
-                    .last_event
-                    .map_or(false, |t| now - t > self.attack_window)
-                {
+                if ts.last_event.is_some_and(|t| now - t > self.attack_window) {
                     ts.score = 0;
                 }
                 ts.score += self.pattern_match_score;

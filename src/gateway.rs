@@ -6,6 +6,7 @@ use crate::engine::SensorEvent;
 
 #[derive(Deserialize)]
 pub struct SensorRequest {
+    #[allow(dead_code)]
     pub device_id: String,
     pub event: SensorEventDTO,
 }
@@ -26,11 +27,13 @@ pub enum SensorEventDTO {
     SensorAccess {
         sensor: String,
         pid: u32,
+        #[allow(dead_code)]
         app_name: String,
     },
     PermissionGranted {
         permission: String,
         pid: u32,
+        #[allow(dead_code)]
         app_name: String,
     },
     Ipv6Connection,

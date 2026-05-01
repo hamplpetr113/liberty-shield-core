@@ -31,18 +31,14 @@ impl MinerPattern {
 }
 
 impl AttackPattern for MinerPattern {
-    fn name(&self) -> &str {
-        "MinerPattern"
-    }
-
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let mut s = self.state.lock().unwrap();
         let now = Instant::now();
 
-        if s.saw_miner.map_or(false, |t| now - t > PATTERN_WINDOW) {
+        if s.saw_miner.is_some_and(|t| now - t > PATTERN_WINDOW) {
             s.saw_miner = None;
         }
-        if s.saw_port.map_or(false, |t| now - t > PATTERN_WINDOW) {
+        if s.saw_port.is_some_and(|t| now - t > PATTERN_WINDOW) {
             s.saw_port = None;
         }
 
@@ -92,15 +88,11 @@ impl KeyloggerPattern {
 }
 
 impl AttackPattern for KeyloggerPattern {
-    fn name(&self) -> &str {
-        "KeyloggerPattern"
-    }
-
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let mut s = self.state.lock().unwrap();
         let now = Instant::now();
 
-        if s.saw_process.map_or(false, |t| now - t > PATTERN_WINDOW) {
+        if s.saw_process.is_some_and(|t| now - t > PATTERN_WINDOW) {
             s.saw_process = None;
         }
 
@@ -148,10 +140,6 @@ impl BotnetPattern {
 }
 
 impl AttackPattern for BotnetPattern {
-    fn name(&self) -> &str {
-        "BotnetPattern"
-    }
-
     fn evaluate(&self, event: &SensorEvent) -> Option<PatternAlert> {
         let (remote_ip, remote_port) = match event {
             SensorEvent::NetworkConnection {

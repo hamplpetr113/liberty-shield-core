@@ -2,7 +2,6 @@ use crate::engine::{Severity, Sink, ThreatAlert};
 use crate::logger;
 
 pub trait ResponseHandler: Send + Sync {
-    fn name(&self) -> &str;
     fn can_handle(&self, alert: &ThreatAlert) -> bool;
     fn respond(&self, alert: &ThreatAlert);
 }
@@ -36,10 +35,6 @@ impl Sink for ResponseEngine {
 pub struct ProcessKillHandler;
 
 impl ResponseHandler for ProcessKillHandler {
-    fn name(&self) -> &str {
-        "ProcessKillHandler"
-    }
-
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         matches!(alert.severity, Severity::Critical) && alert.source.contains("Process")
     }
@@ -55,10 +50,6 @@ impl ResponseHandler for ProcessKillHandler {
 pub struct NetworkBlockHandler;
 
 impl ResponseHandler for NetworkBlockHandler {
-    fn name(&self) -> &str {
-        "NetworkBlockHandler"
-    }
-
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         matches!(alert.severity, Severity::Critical) && alert.source.contains("Network")
     }
@@ -74,10 +65,6 @@ impl ResponseHandler for NetworkBlockHandler {
 pub struct EscalationHandler;
 
 impl ResponseHandler for EscalationHandler {
-    fn name(&self) -> &str {
-        "EscalationHandler"
-    }
-
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         alert.source == "ThreatScore"
     }
@@ -93,10 +80,6 @@ impl ResponseHandler for EscalationHandler {
 pub struct PatternResponseHandler;
 
 impl ResponseHandler for PatternResponseHandler {
-    fn name(&self) -> &str {
-        "PatternResponseHandler"
-    }
-
     fn can_handle(&self, alert: &ThreatAlert) -> bool {
         alert.message.contains("[PATTERN]")
     }

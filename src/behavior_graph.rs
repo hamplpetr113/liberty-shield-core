@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 const PENDING_TTL: Duration = Duration::from_secs(30);
 
 pub enum GraphNode {
-    Process { pid: u32, name: String },
+    Process { pid: u32 },
 
     Network { remote_ip: String, remote_port: u16 },
 }
@@ -42,10 +42,10 @@ impl BehaviorGraph {
         }
     }
 
-    pub fn add_process(&mut self, parent_pid: u32, pid: u32, name: String) {
+    pub fn add_process(&mut self, parent_pid: u32, pid: u32, _name: String) {
         let child_idx = self.nodes.len();
 
-        self.nodes.push(GraphNode::Process { pid, name });
+        self.nodes.push(GraphNode::Process { pid });
 
         self.pid_index.insert(pid, child_idx);
 
@@ -87,45 +87,6 @@ impl BehaviorGraph {
                 self.pending.entry(p).or_default().push((net_idx, now));
             }
         }
-    }
-
-    pub fn summarize_recent_activity(&self) -> String {
-        let process_count = self
-            .nodes
-            .iter()
-            .filter(|n| matches!(n, GraphNode::Process { .. }))
-            .count();
-
-        let network_count = self
-            .nodes
-            .iter()
-            .filter(|n| matches!(n, GraphNode::Network { .. }))
-            .count();
-
-        let spawned = self
-            .edges
-            .iter()
-            .filter(|(_, _, e)| matches!(e, GraphEdge::Spawned))
-            .count();
-
-        let connected_to = self
-            .edges
-            .iter()
-            .filter(|(_, _, e)| matches!(e, GraphEdge::ConnectedTo))
-            .count();
-
-        format!(
-            "BehaviorGraph: {} processes, {} network connections, {} edges ({} spawned, {} connected_to)",
-            process_count,
-            network_count,
-            self.edges.len(),
-            spawned,
-            connected_to
-        )
-    }
-
-    pub fn process_node(&self, pid: u32) -> Option<usize> {
-        self.pid_index.get(&pid).copied()
     }
 
     pub fn connections_of(&self, pid: u32) -> Vec<(String, u16)> {

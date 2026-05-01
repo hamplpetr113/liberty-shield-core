@@ -96,12 +96,11 @@ impl ShieldConfig {
                 cfg.lateral_shell_processes = list;
             }
         }
-        if let Some(v) = pairs.get("lateral_movement.cooldown_secs") {
-            if let Ok(n) = v.trim().parse::<u64>() {
-                if n > 0 {
-                    cfg.lateral_cooldown = Duration::from_secs(n);
-                }
-            }
+        if let Some(v) = pairs.get("lateral_movement.cooldown_secs")
+            && let Ok(n) = v.trim().parse::<u64>()
+            && n > 0
+        {
+            cfg.lateral_cooldown = Duration::from_secs(n);
         }
         if let Some(v) = pairs.get("allowlist.safe_ports") {
             let ports: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
@@ -121,12 +120,11 @@ impl ShieldConfig {
         }
         if let Some(v) = pairs.get("allowlist.safe_172_range") {
             let parts: Vec<&str> = v.splitn(2, '-').collect();
-            if parts.len() == 2 {
-                if let (Ok(lo), Ok(hi)) =
+            if parts.len() == 2
+                && let (Ok(lo), Ok(hi)) =
                     (parts[0].trim().parse::<u8>(), parts[1].trim().parse::<u8>())
-                {
-                    cfg.safe_172_range = (lo, hi);
-                }
+            {
+                cfg.safe_172_range = (lo, hi);
             }
         }
         if let Some(v) = pairs.get("pattern.miner_keywords") {
@@ -161,12 +159,11 @@ impl ShieldConfig {
                 cfg.pattern_botnet_ports = ports;
             }
         }
-        if let Some(v) = pairs.get("pattern.botnet_host_threshold") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 {
-                    cfg.pattern_botnet_host_threshold = n;
-                }
-            }
+        if let Some(v) = pairs.get("pattern.botnet_host_threshold")
+            && let Ok(n) = v.trim().parse::<u32>()
+            && n > 0
+        {
+            cfg.pattern_botnet_host_threshold = n;
         }
         if let Some(v) = pairs.get("process.suspicious_names") {
             let names: Vec<String> = v
@@ -197,58 +194,54 @@ impl ShieldConfig {
                 cfg.suspicious_ports = ports;
             }
         }
-        if let Some(v) = pairs.get("engine.threat_score_threshold") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 {
-                    cfg.threat_score_threshold = n;
-                }
-            }
+        if let Some(v) = pairs.get("engine.threat_score_threshold")
+            && let Ok(n) = v.trim().parse::<u32>()
+            && n > 0
+        {
+            cfg.threat_score_threshold = n;
         }
-        if let Some(v) = pairs.get("process.suspicious_name_score") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                cfg.process_suspicious_name_score = n;
-            }
+        if let Some(v) = pairs.get("process.suspicious_name_score")
+            && let Ok(n) = v.trim().parse::<u32>()
+        {
+            cfg.process_suspicious_name_score = n;
         }
-        if let Some(v) = pairs.get("process.suspicious_lineage_score") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                cfg.process_suspicious_lineage_score = n;
-            }
+        if let Some(v) = pairs.get("process.suspicious_lineage_score")
+            && let Ok(n) = v.trim().parse::<u32>()
+        {
+            cfg.process_suspicious_lineage_score = n;
         }
-        if let Some(v) = pairs.get("network.suspicious_port_score") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                cfg.network_suspicious_port_score = n;
-            }
+        if let Some(v) = pairs.get("network.suspicious_port_score")
+            && let Ok(n) = v.trim().parse::<u32>()
+        {
+            cfg.network_suspicious_port_score = n;
         }
-        if let Some(v) = pairs.get("network.repeat_score") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                cfg.network_repeat_score = n;
-            }
+        if let Some(v) = pairs.get("network.repeat_score")
+            && let Ok(n) = v.trim().parse::<u32>()
+        {
+            cfg.network_repeat_score = n;
         }
-        if let Some(v) = pairs.get("network.repeat_threshold") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 {
-                    cfg.network_repeat_threshold = n;
-                }
-            }
+        if let Some(v) = pairs.get("network.repeat_threshold")
+            && let Ok(n) = v.trim().parse::<u32>()
+            && n > 0
+        {
+            cfg.network_repeat_threshold = n;
         }
-        if let Some(v) = pairs.get("network.scan_threshold") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 {
-                    cfg.network_scan_threshold = n;
-                }
-            }
+        if let Some(v) = pairs.get("network.scan_threshold")
+            && let Ok(n) = v.trim().parse::<u32>()
+            && n > 0
+        {
+            cfg.network_scan_threshold = n;
         }
-        if let Some(v) = pairs.get("engine.attack_window_secs") {
-            if let Ok(n) = v.trim().parse::<u64>() {
-                if n > 0 {
-                    cfg.engine_attack_window_secs = n;
-                }
-            }
+        if let Some(v) = pairs.get("engine.attack_window_secs")
+            && let Ok(n) = v.trim().parse::<u64>()
+            && n > 0
+        {
+            cfg.engine_attack_window_secs = n;
         }
-        if let Some(v) = pairs.get("pattern.match_score") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                cfg.pattern_match_score = n;
-            }
+        if let Some(v) = pairs.get("pattern.match_score")
+            && let Ok(n) = v.trim().parse::<u32>()
+        {
+            cfg.pattern_match_score = n;
         }
         cfg
     }

@@ -50,13 +50,12 @@ impl LateralMovementDetector {
         {
             return true;
         }
-        if ip.split('.').next() == Some("172") {
-            if let Some(second) = ip.split('.').nth(1) {
-                if let Ok(n) = second.parse::<u8>() {
-                    let (lo, hi) = self.safe_172_range;
-                    return (lo..=hi).contains(&n);
-                }
-            }
+        if ip.split('.').next() == Some("172")
+            && let Some(second) = ip.split('.').nth(1)
+            && let Ok(n) = second.parse::<u8>()
+        {
+            let (lo, hi) = self.safe_172_range;
+            return (lo..=hi).contains(&n);
         }
         false
     }
@@ -107,10 +106,10 @@ impl Detector for LateralMovementDetector {
                 {
                     let mut alerted = self.alerted.lock().unwrap();
                     let now = Instant::now();
-                    if let Some(&last) = alerted.get(&p) {
-                        if now.saturating_duration_since(last) < self.cooldown {
-                            return None;
-                        }
+                    if let Some(&last) = alerted.get(&p)
+                        && now.saturating_duration_since(last) < self.cooldown
+                    {
+                        return None;
                     }
                     alerted.insert(p, now);
                 }
