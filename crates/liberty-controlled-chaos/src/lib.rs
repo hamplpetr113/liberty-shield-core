@@ -58,6 +58,7 @@ pub mod flow_controller;
 pub mod gossip_cache;
 pub mod guard_selection;
 pub mod integrated_node_runtime;
+pub mod link_crypto_provider;
 pub mod link_crypto_v2;
 pub mod link_handshake;
 pub mod link_quality_monitor;
