@@ -1,3 +1,6 @@
+#[cfg(feature = "android-ffi")]
+pub mod android_ffi_boundary;
+
 pub mod adaptive_cover;
 pub mod adaptive_path_rotation;
 pub mod alpha_runtime;
