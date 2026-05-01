@@ -507,3 +507,87 @@ pub fn onion_simulate_json(nodes: usize, rounds: usize, delivered: usize) -> Val
 pub fn onion_error_json(msg: &str) -> Value {
     json!({ "error": msg })
 }
+
+// ── Sprint 25-30 outputs ──────────────────────────────────────────────────────
+
+pub fn relay_cell_test_json(payload_len: usize, roundtrip_ok: bool, command: &str) -> Value {
+    json!({
+        "command": "relay-cell-test",
+        "payload_len": payload_len,
+        "roundtrip_ok": roundtrip_ok,
+        "relay_command": command
+    })
+}
+
+pub fn circuit_extend_test_json(hops: usize, is_ready: bool) -> Value {
+    json!({
+        "command": "circuit-extend-test",
+        "hops": hops,
+        "is_ready": is_ready,
+        "status": if is_ready { "extended" } else { "incomplete" }
+    })
+}
+
+pub fn path_select_json(nodes: usize, guard: u64, relay: u64, exit: u64) -> Value {
+    json!({
+        "command": "path-select",
+        "nodes": nodes,
+        "hops": 3,
+        "guard": guard,
+        "relay": relay,
+        "exit": exit,
+        "status": "selected"
+    })
+}
+
+pub fn directory_consensus_json(
+    epoch: u64,
+    nodes: usize,
+    guards: usize,
+    relays: usize,
+    exits: usize,
+) -> Value {
+    json!({
+        "command": "directory-consensus",
+        "epoch": epoch,
+        "nodes": nodes,
+        "guards": guards,
+        "relays": relays,
+        "exits": exits,
+        "status": "built"
+    })
+}
+
+pub fn traffic_schedule_json(
+    epochs: usize,
+    real_enqueued: usize,
+    cover_enqueued: usize,
+    total_drained: usize,
+) -> Value {
+    json!({
+        "command": "traffic-schedule",
+        "epochs": epochs,
+        "real_enqueued": real_enqueued,
+        "cover_enqueued": cover_enqueued,
+        "total_drained": total_drained
+    })
+}
+
+pub fn adversarial_sim_json(
+    model: &str,
+    packets_observed: usize,
+    size_uniform: bool,
+    replay_succeeded: bool,
+) -> Value {
+    json!({
+        "command": "adversarial-sim",
+        "model": model,
+        "packets_observed": packets_observed,
+        "size_uniform": size_uniform,
+        "replay_succeeded": replay_succeeded
+    })
+}
+
+pub fn sprint25_30_error_json(msg: &str) -> Value {
+    json!({ "error": msg })
+}

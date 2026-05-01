@@ -99,6 +99,28 @@ pub enum Command {
         nodes: usize,
         rounds: usize,
     },
+    RelayCellTest {
+        payload: String,
+    },
+    CircuitExtendTest {
+        hops: usize,
+    },
+    PathSelect {
+        nodes: usize,
+    },
+    DirectoryConsensus {
+        nodes: usize,
+        epoch: u64,
+    },
+    TrafficSchedule {
+        real_packets: usize,
+        cover_packets: usize,
+        epochs: usize,
+    },
+    AdversarialSim {
+        model: String,
+        count: usize,
+    },
     Run {
         node_count: usize,
         circuits: usize,
@@ -302,6 +324,42 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 rounds: extract_usize(&args[1..], "--rounds").unwrap_or(10),
             },
         }),
+        "relay-cell-test" => Ok(CliArgs {
+            command: Command::RelayCellTest {
+                payload: extract_string(&args[1..], "--payload")
+                    .unwrap_or_else(|| "test".to_string()),
+            },
+        }),
+        "circuit-extend-test" => Ok(CliArgs {
+            command: Command::CircuitExtendTest {
+                hops: extract_usize(&args[1..], "--hops").unwrap_or(3),
+            },
+        }),
+        "path-select" => Ok(CliArgs {
+            command: Command::PathSelect {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(9),
+            },
+        }),
+        "directory-consensus" => Ok(CliArgs {
+            command: Command::DirectoryConsensus {
+                nodes: extract_usize(&args[1..], "--nodes").unwrap_or(9),
+                epoch: extract_usize(&args[1..], "--epoch").unwrap_or(1) as u64,
+            },
+        }),
+        "traffic-schedule" => Ok(CliArgs {
+            command: Command::TrafficSchedule {
+                real_packets: extract_usize(&args[1..], "--real").unwrap_or(5),
+                cover_packets: extract_usize(&args[1..], "--cover").unwrap_or(3),
+                epochs: extract_usize(&args[1..], "--epochs").unwrap_or(2),
+            },
+        }),
+        "adversarial-sim" => Ok(CliArgs {
+            command: Command::AdversarialSim {
+                model: extract_string(&args[1..], "--model")
+                    .unwrap_or_else(|| "packet-size".to_string()),
+                count: extract_usize(&args[1..], "--count").unwrap_or(10),
+            },
+        }),
         "run" => Ok(CliArgs {
             command: Command::Run {
                 node_count: extract_usize(&args[1..], "--node-count").unwrap_or(100),
@@ -322,11 +380,11 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             },
         }),
         "" => Err(
-            "no command provided. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|onion-circuit-build|onion-send|onion-simulate|run|topology|bench>"
+            "no command provided. Usage: liberty-node <start|...|relay-cell-test|circuit-extend-test|path-select|directory-consensus|traffic-schedule|adversarial-sim|run|topology|bench>"
                 .to_string(),
         ),
         other => Err(format!(
-            "unknown command: {other}. Usage: liberty-node <start|status|peers|cluster-start|cluster-status|cluster-run|cluster-topology|cluster-peers|cluster-bench|udp-testnet-start|udp-testnet-probe|udp-testnet-data|udp-testnet-status|udp-testnet-bench|encrypted-udp-start|encrypted-udp-probe|encrypted-udp-send|encrypted-udp-status|encrypted-udp-bench|handshake-ring|circuit-run|circuit-status|directory-status|cover-traffic-run|onion-circuit-build|onion-send|onion-simulate|run|topology|bench>"
+            "unknown command: {other}. Usage: liberty-node <start|...|relay-cell-test|circuit-extend-test|path-select|directory-consensus|traffic-schedule|adversarial-sim|run|topology|bench>"
         )),
     }
 }
