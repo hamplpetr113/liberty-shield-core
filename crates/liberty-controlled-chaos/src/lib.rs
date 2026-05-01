@@ -117,6 +117,7 @@ pub mod peer_score_ledger;
 pub mod peer_table;
 pub mod policy_engine;
 pub mod privacy_profiles;
+pub mod production_gap_register;
 pub mod proto;
 pub mod readiness_report;
 pub mod real_udp_runtime;
