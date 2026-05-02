@@ -69,6 +69,10 @@ class TcpSession(
             val depth = queueDepth.incrementAndGet()
             // Racy compare-and-set is intentional — both threads write valid peaks, last writer wins
             if (depth > VpnStats.tcpQueueMaxDepth.get()) VpnStats.tcpQueueMaxDepth.set(depth)
+            if (depth > HIGH_QUEUE_THRESHOLD) {
+                VpnStats.tcpHighQueueEvents.incrementAndGet()
+                Log.w(TAG, "TCP queue high depth=$depth flow=$srcIp:$srcPort→$dstIp:$dstPort")
+            }
         }
     }
 
@@ -422,8 +426,9 @@ class TcpSession(
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
         private const val CONNECT_TIMEOUT_MS  = 2_500
         private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
-        private const val READ_BUFFER_SIZE   = 32_768
-        private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val READ_BUFFER_SIZE    = 32_768
+        private const val MSS                 = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val HIGH_QUEUE_THRESHOLD = 64    // warn and count when session queue exceeds this
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"

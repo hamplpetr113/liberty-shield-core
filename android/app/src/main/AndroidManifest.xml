@@ -23,10 +23,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- exported="true" is required: the Android VPN framework must be able to bind
+             to this service to manage the VPN lifecycle and display the system key icon.
+             BIND_VPN_SERVICE permission restricts binding to the platform only. -->
         <service
             android:name=".vpn.ShieldVpnService"
             android:enabled="true"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="connectedDevice"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>

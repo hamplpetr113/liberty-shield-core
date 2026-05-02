@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.libertyshield.agent.vpn.ShieldVpnService
 
 class LauncherActivity : Activity() {
 
@@ -22,30 +23,36 @@ class LauncherActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(vpnIntent, REQUEST_VPN)
         } else {
-            startShieldService()
+            startServices()
         }
     }
 
-    // Called on every return to the foreground (back from RuntimeDashboardActivity, screen-off/on,
-    // or app switcher). Calling startForegroundService() on an already-running service is a no-op
-    // (Android calls onStartCommand but onCreate is not repeated). This ensures ShieldService is
-    // restarted if battery optimisation killed it while the activity was in the background.
+    // Called on every return to the foreground. Restarts services if battery management killed
+    // them while the activity was backgrounded. startForegroundService on an already-running
+    // service is a no-op at the engine level (onStartCommand is called but onCreate is not).
     override fun onResume() {
         super.onResume()
         if (VpnService.prepare(this) == null) {
-            // Permission is already granted — safe to (re)start the service.
-            startShieldService()
+            startServices()
         }
     }
 
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQUEST_VPN && resultCode == RESULT_OK) {
-            startShieldService()
+            startServices()
         }
     }
 
-    private fun startShieldService() {
+    // Start VPN directly from LauncherActivity so VPN startup is independent of ShieldService.
+    // Previously: LauncherActivity → ShieldService → ShieldVpnService (VPN failed silently if
+    // ShieldService initialization threw before reaching startVpnTelemetry()).
+    // Now: LauncherActivity starts both independently; ShieldService telemetry is optional.
+    private fun startServices() {
+        startForegroundService(
+            Intent(this, ShieldVpnService::class.java)
+                .setAction(ShieldVpnService.ACTION_START)
+        )
         startForegroundService(Intent(this, ShieldService::class.java))
     }
 

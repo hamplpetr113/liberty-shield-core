@@ -123,6 +123,9 @@ class ShieldVpnService : VpnService() {
                 }
 
             Log.i(TAG, "step 4: TUN established fd=${tun!!.fd}, starting relay")
+            VpnStats.vpnEstablished.set(true)
+            VpnStats.tunFdValid.set(true)
+            VpnStats.vpnStartTimestampMs.set(System.currentTimeMillis())
             val tunFd = tun!!
             val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
             forwarder = fwd
@@ -137,6 +140,7 @@ class ShieldVpnService : VpnService() {
                 while (isActive && vpnState == VpnState.RUNNING) {
                     if (restarts > 0) Log.w(TAG, "PacketReader restarting (attempt $restarts of $MAX_READER_RESTARTS)")
                     try {
+                        VpnStats.packetReaderRunning.set(true)
                         PacketReader(
                             stream    = FileInputStream(tunFd.fileDescriptor),
                             forwarder = fwd,
@@ -144,13 +148,17 @@ class ShieldVpnService : VpnService() {
                             tracker   = ConnectionTracker(this@ShieldVpnService),
                             client    = client,
                         ).run()
+                        VpnStats.packetReaderRunning.set(false)
                         Log.i(TAG, "PacketReader exited cleanly")
                         break  // clean exit (TUN closed or EOF) — do not restart
                     } catch (e: CancellationException) {
+                        VpnStats.packetReaderRunning.set(false)
                         throw e   // scope is cancelling — propagate, don't treat as a crash
                     } catch (e: Exception) {
+                        VpnStats.packetReaderRunning.set(false)
                         Log.e("VPN_CRASH", "Packet loop crashed", e)
                         restarts++
+                        VpnStats.packetReaderRestarts.set(restarts.toLong())
                         if (restarts > MAX_READER_RESTARTS || vpnState != VpnState.RUNNING) break
                         val backoff = minOf(RESTART_DELAY_MS * restarts, MAX_RESTART_DELAY_MS)
                         Log.w(TAG, "Restarting PacketReader in ${backoff}ms")
@@ -176,6 +184,10 @@ class ShieldVpnService : VpnService() {
             return
         }
         transition(VpnState.STOPPING)
+        VpnStats.vpnEstablished.set(false)
+        VpnStats.tunFdValid.set(false)
+        VpnStats.packetReaderRunning.set(false)
+        VpnStats.vpnStartTimestampMs.set(0L)
         // Close the TUN fd first so PacketReader.run()'s blocking stream.read() throws
         // IOException immediately and the coroutine exits before we cancel the scope.
         tun?.close()

@@ -34,6 +34,38 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- VPN -->
+            <TextView
+                android:id="@+id/header_vpn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VPN"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_vpn_established"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_tun_valid"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_reader_running"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_reader_restarts"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_uptime"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
             <!-- TCP -->
             <TextView
                 android:id="@+id/header_tcp"
@@ -43,7 +75,7 @@
                 android:textSize="13sp"
                 android:textColor="#00CC66"
                 android:textStyle="bold"
-                android:paddingTop="8dp"
+                android:paddingTop="16dp"
                 android:paddingBottom="4dp" />
 
             <TextView android:id="@+id/stat_tcp_active"
@@ -59,6 +91,10 @@
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
             <TextView android:id="@+id/stat_tcp_queue_depth"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_high_queue_events"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
