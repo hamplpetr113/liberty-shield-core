@@ -37,12 +37,17 @@
         <activity
             android:name=".LauncherActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".RuntimeDashboardActivity"
+            android:exported="false"
+            android:label="Runtime Dashboard" />
 
         <activity
             android:name=".VpnPermissionActivity"
