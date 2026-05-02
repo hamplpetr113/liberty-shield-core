@@ -24,12 +24,12 @@ class PacketForwarder(
     private val tcpSessions = TcpSessionTable()
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
-    // TCP is dispatched synchronously (suspend, no scope.launch) to guarantee FIFO packet order.
-    // Out-of-order dispatch via scope.launch caused silent drops: a later coroutine could advance
-    // relayAck past an earlier packet's data, which then looked like a retransmit and was skipped,
-    // corrupting the TLS stream (ERR_SSL_BAD_RECORD_MAC_ALERT).
-    // UDP remains fire-and-forget (scope.launch) because UDP is connectionless and order doesn't matter.
-    suspend fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
+    // TCP: each session owns a Channel<ByteArray> and a dedicated processing coroutine.
+    // enqueue() returns instantly; the session coroutine drains packets in FIFO order.
+    // This means a slow sock.connect() on one session cannot block DNS or other sessions.
+    // FIFO is per-session (5-tuple), not global — the guarantee that matters for TCP.
+    // UDP remains fire-and-forget (scope.launch) because UDP is connectionless.
+    fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
         if (packet.isIpv6) {
             Log.d(TAG, "DROP IPv6 (${len}B) — not relayed")
             return
@@ -45,7 +45,7 @@ class PacketForwarder(
                 val flags = if (buf.size > ihl + 13) buf[ihl + 13].toInt() and 0xFF else 0
                 Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
                 val packetBytes = buf.copyOf(len)
-                dispatchTcp(packetBytes, packet)   // synchronous — preserves TUN packet order
+                dispatchTcp(packetBytes, packet)   // enqueues instantly — per-session FIFO
             }
             else -> Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled")
         }
@@ -100,7 +100,7 @@ class PacketForwarder(
         }
     }
 
-    private suspend fun dispatchTcp(buf: ByteArray, packet: ParsedPacket) {
+    private fun dispatchTcp(buf: ByteArray, packet: ParsedPacket) {
         val isSyn = packet.tcpFlags and TcpPacketBuilder.FLAG_SYN != 0 &&
                     packet.tcpFlags and TcpPacketBuilder.FLAG_ACK == 0
         val key = TcpSession.key(packet.srcIp, packet.srcPort, packet.dstIp, packet.dstPort)
@@ -124,7 +124,7 @@ class PacketForwarder(
             )
         } ?: return
         VpnStats.tcpPacketsIn.incrementAndGet()
-        session.handle(buf)
+        session.enqueue(buf)   // returns immediately; session's own coroutine handles it
     }
 
     // Constructs a raw IPv4 + UDP packet to write back into the TUN fd.

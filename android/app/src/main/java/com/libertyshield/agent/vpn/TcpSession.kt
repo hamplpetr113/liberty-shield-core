@@ -4,6 +4,7 @@ import android.net.VpnService
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -34,8 +35,36 @@ class TcpSession(
     private var relaySeq: Long = 0L
     private var relayAck: Long = 0L
 
+    // Per-session FIFO queue. PacketReader enqueues instantly (never blocks).
+    // A dedicated coroutine drains it, so each session is independent — a slow
+    // sock.connect() on session A cannot delay DNS or a new session B.
+    // Bounded at 256 so a stalled session cannot grow unbounded in memory;
+    // on overflow we send RST and tear down rather than silently dropping packets.
+    private val inQueue  = Channel<ByteArray>(capacity = 256)
+    private var queueJob: Job? = null
+
+    init {
+        queueJob = scope.launch {
+            for (pkt in inQueue) {
+                handle(pkt)
+            }
+        }
+    }
+
+    fun enqueue(pkt: ByteArray) {
+        if (state == State.CLOSED_FINAL) return   // session already torn down — discard
+        val result = inQueue.trySend(pkt)
+        if (result.isFailure) {
+            Log.w(TAG, "TCP session queue full — dropping packet and tearing down $srcIp:$srcPort→$dstIp:$dstPort")
+            scope.launch {
+                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, ackFlag = true), "RST queue-full")
+                teardown()
+            }
+        }
+    }
+
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
-    suspend fun handle(buf: ByteArray) {
+    private suspend fun handle(buf: ByteArray) {
         val seg = parseTcpSegment(buf) ?: return
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "[3] PKT $srcIp:$srcPort→$dstIp:$dstPort " +
@@ -68,6 +97,8 @@ class TcpSession(
     }
 
     fun close() {
+        inQueue.close()
+        queueJob?.cancel()
         serverJob?.cancel()
         runCatching { server?.close() }
     }
@@ -353,6 +384,9 @@ class TcpSession(
     private fun teardown() {
         if (state == State.CLOSED_FINAL) return
         state = State.CLOSED_FINAL
+        inQueue.close()     // causes the for-loop in queueJob to exit naturally
+        queueJob?.cancel()  // belt-and-suspenders: also cancel if it's still waiting
+        queueJob = null
         serverJob?.cancel()
         serverJob = null
         serverOut = null
