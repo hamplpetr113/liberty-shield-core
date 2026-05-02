@@ -46,6 +46,7 @@ class TcpSession(
     private val inQueue    = Channel<ByteArray>(capacity = 256)
     private var queueJob: Job? = null
     private val queueDepth = AtomicInteger(0)   // tracks enqueued-but-not-yet-handled count
+    @Volatile private var highQueueLogged = false
 
     init {
         queueJob = scope.launch {
@@ -69,9 +70,10 @@ class TcpSession(
             val depth = queueDepth.incrementAndGet()
             // Racy compare-and-set is intentional — both threads write valid peaks, last writer wins
             if (depth > VpnStats.tcpQueueMaxDepth.get()) VpnStats.tcpQueueMaxDepth.set(depth)
-            if (depth > HIGH_QUEUE_THRESHOLD) {
+            if (depth > HIGH_QUEUE_THRESHOLD && !highQueueLogged) {
+                highQueueLogged = true
+                Log.w(TAG, "High TCP queue $srcIp:$srcPort→$dstIp:$dstPort depth=$depth")
                 VpnStats.tcpHighQueueEvents.incrementAndGet()
-                Log.w(TAG, "TCP queue high depth=$depth flow=$srcIp:$srcPort→$dstIp:$dstPort")
             }
         }
     }
@@ -357,37 +359,63 @@ class TcpSession(
         val sock = server ?: return
         serverJob = scope.launch {
             try {
-                val inp = sock.getInputStream()
+                val inp     = sock.getInputStream()
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
-                var n = 0
+                var n       = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
                     // ── Point 6: bytes read from server socket ─────────────────
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
-                    // Split into MSS-sized chunks so every IP packet stays within the
-                    // TUN MTU (1500).  A single inp.read() can return up to READ_BUFFER_SIZE
-                    // bytes; building one oversized packet from that causes EMSGSIZE on the
-                    // tunOut.write() and silently tears down the session.
-                    var offset = 0
-                    while (offset < n) {
-                        val chunkLen = minOf(MSS, n - offset)
-                        sessionMutex.withLock {
-                            if (state == State.ESTABLISHED) {
-                                val seqBefore = relaySeq
-                                // Zero-copy: buildData reads directly from readBuf[offset..+chunkLen]
-                                // avoiding a ByteArray allocation per chunk (saves ~1 MB GC per MB transferred).
-                                val pkt = TcpPacketBuilder.buildData(
-                                    dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck,
-                                    readBuf, offset, chunkLen,
-                                )
-                                send(pkt, "PSH|ACK data=${chunkLen}B")
-                                relaySeq = mask32(relaySeq + chunkLen)
-                                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
-                                    Log.d(TAG, "[7] BUILD DATA ${chunkLen}B $srcIp:$srcPort→$dstIp:$dstPort " +
-                                        "seqBefore=$seqBefore seqAfter=$relaySeq relayAck=$relayAck")
-                                }
+                    // Split into MSS-sized chunks (MTU 1500 → MSS 1460).
+                    //
+                    // Three-phase mutex strategy:
+                    //   Phase 1 — one sessionMutex lock for the whole read: snapshot relayAck,
+                    //             record (seq, len) for each chunk, advance relaySeq. No allocs.
+                    //   Phase 2 — build IP/TCP packets outside every lock.
+                    //   Phase 3 — one writeMutex lock to batch-write all chunks to TUN.
+                    //
+                    // Previously: sessionMutex → writeMutex acquired per chunk (~90 times for a
+                    // 131 KB read), with packet allocation inside sessionMutex on every iteration.
+                    val numChunks = (n + MSS - 1) / MSS
+                    val seqSnaps  = LongArray(numChunks)
+                    val chunkLens = IntArray(numChunks)
+                    var ackSnap   = 0L
+                    var active    = false
+                    sessionMutex.withLock {
+                        if (state == State.ESTABLISHED) {
+                            active  = true
+                            ackSnap = relayAck
+                            var off = 0
+                            var i   = 0
+                            while (off < n) {
+                                val cl       = minOf(MSS, n - off)
+                                seqSnaps[i]  = relaySeq
+                                chunkLens[i] = cl
+                                relaySeq     = mask32(relaySeq + cl)
+                                off += cl
+                                i++
                             }
                         }
-                        offset += chunkLen
+                    }
+                    if (!active) continue
+
+                    // Phase 2: build all packets — allocations outside any lock
+                    val packets = ArrayList<ByteArray>(numChunks)
+                    var off = 0
+                    for (i in 0 until numChunks) {
+                        packets.add(TcpPacketBuilder.buildData(
+                            dstIp, srcIp, dstPort, srcPort, seqSnaps[i], ackSnap,
+                            readBuf, off, chunkLens[i],
+                        ))
+                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                            Log.d(TAG, "[7] BUILD DATA ${chunkLens[i]}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
+                        }
+                        off += chunkLens[i]
+                    }
+
+                    // Phase 3: one writeMutex acquisition for the entire batch
+                    writeMutex.withLock {
+                        for (pkt in packets) tunOut.write(pkt)
+                        tunOut.flush()
                     }
                 }
             } catch (_: Exception) { }
@@ -426,7 +454,7 @@ class TcpSession(
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
         private const val CONNECT_TIMEOUT_MS  = 2_500
         private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
-        private const val READ_BUFFER_SIZE    = 32_768
+        private const val READ_BUFFER_SIZE    = 131_072
         private const val MSS                 = 1_460  // MTU(1500) − IP(20) − TCP(20)
         private const val HIGH_QUEUE_THRESHOLD = 64    // warn and count when session queue exceeds this
 
