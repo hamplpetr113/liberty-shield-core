@@ -4,11 +4,13 @@ import android.net.VpnService
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
@@ -385,7 +387,9 @@ class TcpSession(
                     }
                 }
             } catch (_: Exception) { }
-            sessionMutex.withLock { teardown() }
+            // NonCancellable: if serverJob was cancelled externally, a plain suspend call
+            // would throw CancellationException and skip teardown. Wrap so teardown always runs.
+            withContext(NonCancellable) { sessionMutex.withLock { teardown() } }
         }
     }
 

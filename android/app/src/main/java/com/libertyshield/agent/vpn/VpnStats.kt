@@ -16,9 +16,10 @@ object VpnStats {
     val tcpPacketsIn       = AtomicLong()   // total packets delivered to session.handle()
 
     // UDP relay (one-shot per request)
-    val udpRequestsSent  = AtomicLong()
-    val udpResponsesRecv = AtomicLong()
-    val udpErrors        = AtomicLong()
+    val udpRequestsSent      = AtomicLong()
+    val udpResponsesRecv     = AtomicLong()
+    val udpErrors            = AtomicLong()
+    val udpConcurrencyDrops  = AtomicLong()   // dropped because semaphore was full (IO-thread guard)
 
     // DNS cache + latency (network-only, cache hits excluded)
     val dnsCacheHits      = AtomicLong()
@@ -65,6 +66,7 @@ object VpnStats {
         append(" udpSent=").append(udpRequestsSent.get())
         append(" udpRecv=").append(udpResponsesRecv.get())
         append(" udpErr=").append(udpErrors.get())
+        append(" udpDrop=").append(udpConcurrencyDrops.get())
         append(" dnsAvgMs=").append(if (dnsAvgMs >= 0) dnsAvgMs else "n/a")
         append(" dnsHit=").append(dnsCacheHits.get())
         append(" dnsTout=").append(dnsTimeouts.get())

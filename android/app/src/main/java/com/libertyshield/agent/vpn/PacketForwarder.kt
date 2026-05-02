@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import java.io.FileOutputStream
 import java.io.IOException
@@ -23,6 +24,10 @@ class PacketForwarder(
     private val writeMutex  = Mutex()   // guards concurrent writes to the single tunOut fd
     private val tcpSessions = TcpSessionTable()
     private val dnsCache    = DnsCache()
+    // Caps concurrent blocking UDP coroutines to prevent Dispatchers.IO thread starvation.
+    // Each forwardUdp() blocks an IO thread for up to SOCKET_TIMEOUT_MS (2 s). Without a
+    // cap, a burst of QUIC/UDP traffic fills the 64-thread IO pool and starves TCP serverJobs.
+    private val udpSemaphore = Semaphore(MAX_UDP_CONCURRENT)
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
     // TCP: each session owns a Channel<ByteArray> and a dedicated processing coroutine.
@@ -39,7 +44,14 @@ class PacketForwarder(
             PacketParser.PROTO_UDP -> {
                 if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
                 val packetBytes = buf.copyOf(len)
-                scope.launch { forwardUdp(packetBytes, len, packet) }
+                scope.launch {
+                    if (!udpSemaphore.tryAcquire()) {
+                        VpnStats.udpConcurrencyDrops.incrementAndGet()
+                        return@launch
+                    }
+                    try { forwardUdp(packetBytes, len, packet) }
+                    finally { udpSemaphore.release() }
+                }
             }
             PacketParser.PROTO_TCP -> {
                 val ihl   = (buf[0].toInt() and 0x0F) * 4
@@ -224,5 +236,6 @@ class PacketForwarder(
         private const val SOCKET_TIMEOUT_MS   = 2_000   // general UDP timeout
         private const val QUIC_PORT           = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
         private const val MAX_UDP_PAYLOAD     = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
+        private const val MAX_UDP_CONCURRENT  = 32      // cap blocking IO threads for UDP; excess packets dropped
     }
 }
