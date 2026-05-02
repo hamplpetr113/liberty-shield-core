@@ -1,5 +1,6 @@
 package com.libertyshield.agent.vpn
 
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -19,6 +20,14 @@ object VpnStats {
     val udpResponsesRecv = AtomicLong()
     val udpErrors        = AtomicLong()
 
+    // DNS cache
+    val dnsCacheHits = AtomicLong()
+    val dnsTimeouts  = AtomicLong()
+
+    // TCP session queue health
+    val tcpQueueOverflows = AtomicLong()
+    val tcpQueueMaxDepth  = AtomicInteger()   // approximate peak depth across all live sessions
+
     // Gateway HTTP posts
     val gwPostOk   = AtomicLong()
     val gwPostFail = AtomicLong()
@@ -28,9 +37,13 @@ object VpnStats {
         append(" tcpCreated=").append(tcpSessionsCreated.get())
         append(" tcpClosed=").append(tcpSessionsClosed.get())
         append(" tcpPkts=").append(tcpPacketsIn.get())
+        append(" tcpQueueOvf=").append(tcpQueueOverflows.get())
+        append(" tcpQueueMaxD=").append(tcpQueueMaxDepth.get())
         append(" udpSent=").append(udpRequestsSent.get())
         append(" udpRecv=").append(udpResponsesRecv.get())
         append(" udpErr=").append(udpErrors.get())
+        append(" dnsHit=").append(dnsCacheHits.get())
+        append(" dnsTout=").append(dnsTimeouts.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
     }

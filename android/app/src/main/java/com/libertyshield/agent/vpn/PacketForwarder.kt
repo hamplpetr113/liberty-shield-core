@@ -19,9 +19,10 @@ class PacketForwarder(
     private val vpnService: VpnService,
     private val tunOut: FileOutputStream,
 ) {
-    private val scope      = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope       = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeMutex  = Mutex()   // guards concurrent writes to the single tunOut fd
     private val tcpSessions = TcpSessionTable()
+    private val dnsCache    = DnsCache()
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
     // TCP: each session owns a Channel<ByteArray> and a dedicated processing coroutine.
@@ -63,12 +64,32 @@ class PacketForwarder(
         if (payloadLen <= 0) return
 
         val payload = buf.copyOfRange(payloadStart, len)
+        val isDns   = packet.dstPort == 53
+
+        // DNS cache fast path — serve from memory, skip network entirely
+        if (isDns) {
+            val cached = dnsCache.get(payload)
+            if (cached != null) {
+                VpnStats.dnsCacheHits.incrementAndGet()
+                val response = buildIpv4UdpPacket(
+                    srcIp   = packet.dstIp,
+                    dstIp   = packet.srcIp,
+                    srcPort = packet.dstPort,
+                    dstPort = packet.srcPort,
+                    payload = cached,
+                )
+                writeMutex.withLock { tunOut.write(response); tunOut.flush() }
+                return
+            }
+        }
+
         try {
             DatagramSocket().use { socket ->
                 if (!vpnService.protect(socket)) {
                     throw IOException("protect() failed for UDP ${packet.dstIp}:${packet.dstPort}")
                 }
-                socket.soTimeout = SOCKET_TIMEOUT_MS
+                // DNS gets a tighter timeout — a missed DNS reply causes visible page-load delay
+                socket.soTimeout = if (isDns) DNS_TIMEOUT_MS else SOCKET_TIMEOUT_MS
 
                 socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
                 VpnStats.udpRequestsSent.incrementAndGet()
@@ -81,17 +102,20 @@ class PacketForwarder(
                 try {
                     socket.receive(respDgram)
                     VpnStats.udpResponsesRecv.incrementAndGet()
+                    val respPayload = respBuf.copyOf(respDgram.length)
+                    if (isDns) dnsCache.put(payload, respPayload)
                     val response = buildIpv4UdpPacket(
                         srcIp   = packet.dstIp,   // server → app
                         dstIp   = packet.srcIp,
                         srcPort = packet.dstPort,
                         dstPort = packet.srcPort,
-                        payload = respBuf.copyOf(respDgram.length),
+                        payload = respPayload,
                     )
                     writeMutex.withLock { tunOut.write(response); tunOut.flush() }
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
                 } catch (_: java.net.SocketTimeoutException) {
-                    // Fire-and-forget UDP or server timed out — not an error
+                    if (isDns) VpnStats.dnsTimeouts.incrementAndGet()
+                    // Non-DNS timeout is fire-and-forget — not an error
                 }
             }
         } catch (e: Exception) {
@@ -182,7 +206,8 @@ class PacketForwarder(
     companion object {
         private const val TAG                 = "PacketForwarder"
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every dispatch in debug builds
-        private const val SOCKET_TIMEOUT_MS   = 2_000
-        private const val MAX_UDP_PAYLOAD   = 65_507   // max UDP payload (65535 − 20 IP − 8 UDP)
+        private const val DNS_TIMEOUT_MS      = 800     // tighter timeout for DNS — a miss causes visible delay
+        private const val SOCKET_TIMEOUT_MS   = 2_000   // general UDP timeout
+        private const val MAX_UDP_PAYLOAD     = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
     }
 }

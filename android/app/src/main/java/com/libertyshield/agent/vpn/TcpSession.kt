@@ -13,6 +13,7 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicInteger
 
 class TcpSession(
     private val srcIp: String,
@@ -40,8 +41,9 @@ class TcpSession(
     // sock.connect() on session A cannot delay DNS or a new session B.
     // Bounded at 256 so a stalled session cannot grow unbounded in memory;
     // on overflow we send RST and tear down rather than silently dropping packets.
-    private val inQueue  = Channel<ByteArray>(capacity = 256)
+    private val inQueue    = Channel<ByteArray>(capacity = 256)
     private var queueJob: Job? = null
+    private val queueDepth = AtomicInteger(0)   // tracks enqueued-but-not-yet-handled count
 
     init {
         queueJob = scope.launch {
@@ -55,16 +57,22 @@ class TcpSession(
         if (state == State.CLOSED_FINAL) return   // session already torn down — discard
         val result = inQueue.trySend(pkt)
         if (result.isFailure) {
+            VpnStats.tcpQueueOverflows.incrementAndGet()
             Log.w(TAG, "TCP session queue full — dropping packet and tearing down $srcIp:$srcPort→$dstIp:$dstPort")
             scope.launch {
                 send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, ackFlag = true), "RST queue-full")
                 teardown()
             }
+        } else {
+            val depth = queueDepth.incrementAndGet()
+            // Racy compare-and-set is intentional — both threads write valid peaks, last writer wins
+            if (depth > VpnStats.tcpQueueMaxDepth.get()) VpnStats.tcpQueueMaxDepth.set(depth)
         }
     }
 
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
     private suspend fun handle(buf: ByteArray) {
+        queueDepth.decrementAndGet()
         val seg = parseTcpSegment(buf) ?: return
         if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "[3] PKT $srcIp:$srcPort→$dstIp:$dstPort " +
@@ -228,7 +236,10 @@ class TcpSession(
                 null
             } else {
                 s.tcpNoDelay = true    // disable Nagle — critical for TLS handshake latency
+                val t0 = System.currentTimeMillis()
                 s.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
+                val elapsed = System.currentTimeMillis() - t0
+                if (elapsed > CONNECT_WARN_MS) Log.w(TAG, "TCP slow connect ${elapsed}ms $dstIp:$dstPort")
                 s
             }
         } catch (e: Exception) {
@@ -403,6 +414,7 @@ class TcpSession(
         private const val TAG                 = "TcpSession"
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
         private const val CONNECT_TIMEOUT_MS  = 5_000
+        private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
         private const val READ_BUFFER_SIZE   = 32_768
         private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
 
