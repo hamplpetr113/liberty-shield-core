@@ -13,6 +13,7 @@ import com.libertyshield.agent.GatewayClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -126,22 +127,33 @@ class ShieldVpnService : VpnService() {
             val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
             forwarder = fwd
             scope.launch {
-                try {
-                    PacketReader(
-                        stream    = FileInputStream(tunFd.fileDescriptor),
-                        forwarder = fwd,
-                        parser    = PacketParser(),
-                        tracker   = ConnectionTracker(this@ShieldVpnService),
-                        client    = client,
-                    ).run()
-                    Log.i(TAG, "PacketReader exited cleanly")
-                } catch (e: Exception) {
-                    Log.e(TAG, "PacketReader crashed: ${e::class.java.simpleName}: ${e.message}")
-                } finally {
-                    if (vpnState == VpnState.RUNNING) {
-                        Log.w(TAG, "PacketReader exited while VPN running — stopping VPN")
-                        stopVpn()
+                var restarts = 0
+                while (isActive && vpnState == VpnState.RUNNING) {
+                    if (restarts > 0) Log.w(TAG, "PacketReader restarting (attempt $restarts of $MAX_READER_RESTARTS)")
+                    try {
+                        PacketReader(
+                            stream    = FileInputStream(tunFd.fileDescriptor),
+                            forwarder = fwd,
+                            parser    = PacketParser(),
+                            tracker   = ConnectionTracker(this@ShieldVpnService),
+                            client    = client,
+                        ).run()
+                        Log.i(TAG, "PacketReader exited cleanly")
+                        break  // clean exit (TUN closed or EOF) — do not restart
+                    } catch (e: CancellationException) {
+                        throw e   // scope is cancelling — propagate, don't treat as a crash
+                    } catch (e: Exception) {
+                        Log.e("VPN_CRASH", "Packet loop crashed", e)
+                        restarts++
+                        if (restarts > MAX_READER_RESTARTS || vpnState != VpnState.RUNNING) break
+                        val backoff = minOf(RESTART_DELAY_MS * restarts, MAX_RESTART_DELAY_MS)
+                        Log.w(TAG, "Restarting PacketReader in ${backoff}ms")
+                        delay(backoff)
                     }
+                }
+                if (vpnState == VpnState.RUNNING) {
+                    Log.w(TAG, "PacketReader permanently exited while VPN running — stopping VPN")
+                    stopVpn()
                 }
             }
             startHeartbeat()
@@ -208,9 +220,12 @@ class ShieldVpnService : VpnService() {
     companion object {
         const val ACTION_START   = "com.libertyshield.agent.VPN_START"
         const val ACTION_STOP    = "com.libertyshield.agent.VPN_STOP"
-        private const val TAG          = "ShieldVpnService"
-        private const val NOTIF_ID     = 2
-        private const val CHANNEL_ID   = "liberty_shield_vpn_channel"
-        private const val HEARTBEAT_MS = 5_000L
+        private const val TAG                  = "ShieldVpnService"
+        private const val NOTIF_ID             = 2
+        private const val CHANNEL_ID           = "liberty_shield_vpn_channel"
+        private const val HEARTBEAT_MS         = 5_000L
+        private const val MAX_READER_RESTARTS  = 5
+        private const val RESTART_DELAY_MS     = 500L    // base backoff; multiplied by attempt number
+        private const val MAX_RESTART_DELAY_MS = 5_000L  // caps backoff at 5 s
     }
 }

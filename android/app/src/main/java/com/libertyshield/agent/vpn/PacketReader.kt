@@ -5,6 +5,7 @@ import com.libertyshield.agent.GatewayClient
 import com.libertyshield.agent.models.SensorEvent
 import java.io.FileInputStream
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 
 class PacketReader(
     private val stream: FileInputStream,
@@ -31,21 +32,28 @@ class PacketReader(
                 val len = stream.read(buf)
                 if (len < 0) { Log.i(TAG, "TUN read returned -1 — fd closed"); break }
                 if (len == 0) continue      // EAGAIN on non-blocking fd — no packet yet
-                val packet = parser.parse(buf, len)
-                if (packet == null) {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "TUN pkt ${len}B → parser returned null (too short/malformed)")
-                    continue
-                }
-                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
-                    val proto = if (packet.isIpv6) "IPv6" else when (packet.protocol) {
-                        PacketParser.PROTO_TCP -> "TCP"
-                        PacketParser.PROTO_UDP -> "UDP"
-                        else -> "proto=${packet.protocol}"
+                try {
+                    val packet = parser.parse(buf, len)
+                    if (packet == null) {
+                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "TUN pkt ${len}B → parser returned null (too short/malformed)")
+                        continue
                     }
-                    Log.d(TAG, "TUN pkt ${len}B $proto ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${packet.tcpFlags.toString(16)}")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                        val proto = if (packet.isIpv6) "IPv6" else when (packet.protocol) {
+                            PacketParser.PROTO_TCP -> "TCP"
+                            PacketParser.PROTO_UDP -> "UDP"
+                            else -> "proto=${packet.protocol}"
+                        }
+                        Log.d(TAG, "TUN pkt ${len}B $proto ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${packet.tcpFlags.toString(16)}")
+                    }
+                    emitTelemetry(packet)
+                    forwarder.forward(buf, len, packet)
+                } catch (e: CancellationException) {
+                    throw e   // scope cancellation must not be swallowed by the per-packet guard
+                } catch (e: Exception) {
+                    Log.e("VPN_CRASH", "Packet loop crashed", e)
+                    // continue the loop — one bad packet does not kill PacketReader
                 }
-                emitTelemetry(packet)
-                forwarder.forward(buf, len, packet)
             }
         } catch (_: IOException) {
             Log.i(TAG, "PacketReader exited via IOException — VPN stopping")
