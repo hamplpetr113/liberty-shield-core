@@ -22,7 +22,38 @@
         android:text="Refreshes every 1 s"
         android:textSize="11sp"
         android:textColor="#888888"
-        android:paddingBottom="16dp" />
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/vpn_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:paddingBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingBottom="16dp">
+
+        <Button
+            android:id="@+id/btn_start_vpn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="Start VPN" />
+
+        <Button
+            android:id="@+id/btn_stop_vpn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stop VPN" />
+
+    </LinearLayout>
 
     <ScrollView
         android:layout_width="match_parent"

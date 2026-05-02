@@ -1,8 +1,11 @@
 package com.libertyshield.agent
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Button
 import android.widget.TextView
+import com.libertyshield.agent.vpn.ShieldVpnService
 import com.libertyshield.agent.vpn.VpnStats
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +18,11 @@ import kotlinx.coroutines.launch
 class RuntimeDashboardActivity : Activity() {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // Controls
+    private lateinit var vpnStatus:    TextView
+    private lateinit var btnStartVpn:  Button
+    private lateinit var btnStopVpn:   Button
 
     // VPN lifecycle
     private lateinit var statVpnEstablished:    TextView
@@ -60,6 +68,23 @@ class RuntimeDashboardActivity : Activity() {
     }
 
     private fun bindViews() {
+        vpnStatus   = findViewById(R.id.vpn_status)
+        btnStartVpn = findViewById(R.id.btn_start_vpn)
+        btnStopVpn  = findViewById(R.id.btn_stop_vpn)
+
+        btnStartVpn.setOnClickListener {
+            startForegroundService(
+                Intent(this, ShieldVpnService::class.java)
+                    .setAction(ShieldVpnService.ACTION_START)
+            )
+        }
+        btnStopVpn.setOnClickListener {
+            startService(
+                Intent(this, ShieldVpnService::class.java)
+                    .setAction(ShieldVpnService.ACTION_STOP)
+            )
+        }
+
         statVpnEstablished    = findViewById(R.id.stat_vpn_established)
         statVpnTunValid       = findViewById(R.id.stat_vpn_tun_valid)
         statVpnReaderRunning  = findViewById(R.id.stat_vpn_reader_running)
@@ -95,6 +120,12 @@ class RuntimeDashboardActivity : Activity() {
     }
 
     private fun updateStats() {
+        val vpnOn = VpnStats.vpnEstablished.get()
+        vpnStatus.text      = "VPN status: ${if (vpnOn) "ON" else "OFF"}"
+        vpnStatus.setTextColor(if (vpnOn) 0xFF00CC66.toInt() else 0xFFFF4444.toInt())
+        btnStartVpn.isEnabled = !vpnOn
+        btnStopVpn.isEnabled  = vpnOn
+
         // VPN lifecycle
         val startMs = VpnStats.vpnStartTimestampMs.get()
         val uptimeStr = if (startMs == 0L) "not started"
