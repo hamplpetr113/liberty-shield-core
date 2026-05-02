@@ -31,23 +31,23 @@ class PacketForwarder(
     // UDP remains fire-and-forget (scope.launch) because UDP is connectionless.
     fun forward(buf: ByteArray, len: Int, packet: ParsedPacket) {
         if (packet.isIpv6) {
-            Log.d(TAG, "DROP IPv6 (${len}B) — not relayed")
+            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "DROP IPv6 (${len}B) — not relayed")
             return
         }
         when (packet.protocol) {
             PacketParser.PROTO_UDP -> {
-                Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "DISPATCH UDP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} ${len}B")
                 val packetBytes = buf.copyOf(len)
                 scope.launch { forwardUdp(packetBytes, len, packet) }
             }
             PacketParser.PROTO_TCP -> {
                 val ihl   = (buf[0].toInt() and 0x0F) * 4
                 val flags = if (buf.size > ihl + 13) buf[ihl + 13].toInt() and 0xFF else 0
-                Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
                 val packetBytes = buf.copyOf(len)
                 dispatchTcp(packetBytes, packet)   // enqueues instantly — per-session FIFO
             }
-            else -> Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled")
+            else -> { if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "DROP proto=${packet.protocol} (${len}B) — unhandled") }
         }
     }
 
@@ -72,7 +72,7 @@ class PacketForwarder(
 
                 socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
                 VpnStats.udpRequestsSent.incrementAndGet()
-                Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
 
                 // Wait for one response (covers DNS and simple request-response protocols).
                 // Multi-packet UDP flows (QUIC, video) need a persistent-socket relay — TODO next sprint.
@@ -89,7 +89,7 @@ class PacketForwarder(
                         payload = respBuf.copyOf(respDgram.length),
                     )
                     writeMutex.withLock { tunOut.write(response); tunOut.flush() }
-                    Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
                 } catch (_: java.net.SocketTimeoutException) {
                     // Fire-and-forget UDP or server timed out — not an error
                 }
@@ -180,8 +180,9 @@ class PacketForwarder(
     }
 
     companion object {
-        private const val TAG               = "PacketForwarder"
-        private const val SOCKET_TIMEOUT_MS = 5_000
+        private const val TAG                 = "PacketForwarder"
+        private const val VERBOSE_PACKET_LOGS = false   // set true to trace every dispatch in debug builds
+        private const val SOCKET_TIMEOUT_MS   = 2_000
         private const val MAX_UDP_PAYLOAD   = 65_507   // max UDP payload (65535 − 20 IP − 8 UDP)
     }
 }

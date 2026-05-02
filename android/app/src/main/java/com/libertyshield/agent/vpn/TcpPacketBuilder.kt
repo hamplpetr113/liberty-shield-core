@@ -87,6 +87,22 @@ object TcpPacketBuilder {
         payload: ByteArray,
     ): ByteArray = build(srcIp, dstIp, srcPort, dstPort, seq, ack, FLAG_PSH or FLAG_ACK, payload)
 
+    /** Zero-copy overload: reads [payloadOffset, payloadOffset+payloadLen) from payload directly. */
+    fun buildData(
+        srcIp: String, dstIp: String,
+        srcPort: Int,  dstPort: Int,
+        seq: Long,     ack: Long,
+        payload: ByteArray, payloadOffset: Int, payloadLen: Int,
+    ): ByteArray {
+        require(payloadOffset >= 0) { "payloadOffset=$payloadOffset < 0" }
+        require(payloadLen >= 0) { "payloadLen=$payloadLen < 0" }
+        require(payloadOffset + payloadLen <= payload.size) {
+            "payloadOffset($payloadOffset)+payloadLen($payloadLen) > payload.size(${payload.size})"
+        }
+        return build(srcIp, dstIp, srcPort, dstPort, seq, ack, FLAG_PSH or FLAG_ACK,
+                     payload, payloadOffset, payloadLen)
+    }
+
     /**
      * FIN-ACK — initiates or acknowledges graceful connection teardown.
      *
@@ -132,13 +148,15 @@ object TcpPacketBuilder {
         seq: Long,     ack: Long,
         flags: Int,
         payload: ByteArray = ByteArray(0),
+        payloadOffset: Int = 0,
+        payloadLen: Int    = payload.size,
     ): ByteArray {
-        val tcpLen   = TCP_HEADER_LEN + payload.size
+        val tcpLen   = TCP_HEADER_LEN + payloadLen
         val totalLen = IP_HEADER_LEN  + tcpLen
         val out      = ByteArray(totalLen)  // zero-initialised by JVM
 
         writeIpHeader(out, srcIp, dstIp, totalLen)
-        writeTcpHeader(out, srcPort, dstPort, seq, ack, flags, payload)
+        writeTcpHeader(out, srcPort, dstPort, seq, ack, flags, payload, payloadOffset, payloadLen)
 
         // TCP checksum must be computed after both headers and payload are in place,
         // with the checksum field still zero (guaranteed by zero-init above + no early write).
@@ -201,6 +219,8 @@ object TcpPacketBuilder {
         seq: Long,    ack: Long,
         flags: Int,
         payload: ByteArray,
+        payloadOffset: Int = 0,
+        payloadLen: Int    = payload.size,
     ) {
         val b = IP_HEADER_LEN   // TCP header starts immediately after the IP header
 
@@ -243,7 +263,7 @@ object TcpPacketBuilder {
         // Bytes 18-19: urgent pointer — 0 (URG flag is never set by this relay).
 
         // Payload follows immediately after the 20-byte header.
-        payload.copyInto(out, b + TCP_HEADER_LEN)
+        payload.copyInto(out, b + TCP_HEADER_LEN, payloadOffset, payloadOffset + payloadLen)
     }
 
     // ── Checksum helpers ──────────────────────────────────────────────────────

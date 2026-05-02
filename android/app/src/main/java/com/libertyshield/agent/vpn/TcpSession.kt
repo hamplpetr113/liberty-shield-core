@@ -66,7 +66,7 @@ class TcpSession(
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
     private suspend fun handle(buf: ByteArray) {
         val seg = parseTcpSegment(buf) ?: return
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "[3] PKT $srcIp:$srcPort→$dstIp:$dstPort " +
                 "flags=${flagsStr(seg.flags)} seq=${seg.seq} ack=${seg.ack} " +
                 "ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} " +
@@ -137,7 +137,7 @@ class TcpSession(
             return ByteArray(0)
         }
         val payload = buf.copyOfRange(seg.payloadOffset, end)
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
             val preview = if (payload.isNotEmpty()) payloadPreview(payload) else "(empty)"
             Log.d(TAG, "[4] EXTRACT $srcIp:$srcPort→$dstIp:$dstPort " +
                 "ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} " +
@@ -244,7 +244,7 @@ class TcpSession(
                 server = sock
                 serverOut = sock.getOutputStream()
                 state = State.SYN_RECEIVED
-                Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort→$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort→$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
                 send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "SYN|ACK")
                 relaySeq = mask32(relaySeq + 1)
             }
@@ -256,12 +256,12 @@ class TcpSession(
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
             seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
                 state = State.ESTABLISHED
-                Log.d(TAG, "ESTABLISHED $srcIp:$srcPort→$dstIp:$dstPort payloadLen=${seg.payloadLen}")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED $srcIp:$srcPort→$dstIp:$dstPort payloadLen=${seg.payloadLen}")
                 startServerReader()
                 if (seg.payloadLen > 0) {
-                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort")
                 } else {
-                    Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK — awaiting ClientHello")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK — awaiting ClientHello")
                 }
                 handleEstablished(seg, buf)
             }
@@ -271,7 +271,7 @@ class TcpSession(
     private suspend fun handleEstablished(seg: TcpSegment, buf: ByteArray) {
         when {
             seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> {
-                Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort→$dstIp:$dstPort")
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort→$dstIp:$dstPort")
                 teardown()
             }
             seg.flags and TcpPacketBuilder.FLAG_FIN != 0 -> {
@@ -281,10 +281,10 @@ class TcpSession(
                 // the stream and corrupts POST bodies or HTTP/1.0 responses.
                 val payload = extractPayload(buf, seg)
                 if (payload.isNotEmpty()) {
-                    Log.d(TAG, "ESTABLISHED FIN piggybacked ${payload.size}B — forwarding before close $srcIp:$srcPort→$dstIp:$dstPort")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED FIN piggybacked ${payload.size}B — forwarding before close $srcIp:$srcPort→$dstIp:$dstPort")
                     forwardToServer(payload)
                 } else {
-                    Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
                 }
                 relayAck = mask32(seg.seq + payload.size.toLong() + 1)
                 send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "FIN|ACK")
@@ -300,17 +300,17 @@ class TcpSession(
                     if (seq32Covered(nextSeq, relayAck)) {
                         // Retransmit — these bytes were already forwarded; re-ACK without forwarding.
                         // Forwarding duplicates corrupts the server stream (TLS_ALERT, Connection reset).
-                        Log.d(TAG, "c→s RETRANSMIT ${payload.size}B seq=${seg.seq} covered by relayAck=$relayAck — skip $srcIp:$srcPort→$dstIp:$dstPort")
+                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s RETRANSMIT ${payload.size}B seq=${seg.seq} covered by relayAck=$relayAck — skip $srcIp:$srcPort→$dstIp:$dstPort")
                         send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK retransmit")
                         return
                     }
                     relayAck = nextSeq
-                    Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
                         "newRelayAck=$relayAck $srcIp:$srcPort→$dstIp:$dstPort")
                     forwardToServer(payload)
                     send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK")
                 } else {
-                    Log.d(TAG, "c→s 0B pure-ACK flags=${flagsStr(seg.flags)} seq=${seg.seq} $srcIp:$srcPort→$dstIp:$dstPort")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s 0B pure-ACK flags=${flagsStr(seg.flags)} seq=${seg.seq} $srcIp:$srcPort→$dstIp:$dstPort")
                 }
             }
         }
@@ -323,10 +323,10 @@ class TcpSession(
                 Log.e(TAG, "[5] forwardToServer: serverOut null — dropping ${data.size}B $srcIp:$srcPort→$dstIp:$dstPort")
                 return
             }
-            Log.d(TAG, "[5] forwardToServer: writing ${data.size}B to $dstIp:$dstPort")
+            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: writing ${data.size}B to $dstIp:$dstPort")
             out.write(data)
             out.flush()
-            Log.d(TAG, "[5] forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
+            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
         } catch (e: Exception) {
             Log.w(TAG, "[5] forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
             teardown()
@@ -342,7 +342,7 @@ class TcpSession(
                 var n = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
                     // ── Point 6: bytes read from server socket ─────────────────
-                    Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
                     // Split into MSS-sized chunks so every IP packet stays within the
                     // TUN MTU (1500).  A single inp.read() can return up to READ_BUFFER_SIZE
                     // bytes; building one oversized packet from that causes EMSGSIZE on the
@@ -350,21 +350,24 @@ class TcpSession(
                     var offset = 0
                     while (offset < n) {
                         val chunkLen = minOf(MSS, n - offset)
-                        val chunk = readBuf.copyOfRange(offset, offset + chunkLen)
-                        offset += chunkLen
                         sessionMutex.withLock {
-                            if (state != State.ESTABLISHED) return@withLock
-                            val seqBefore = relaySeq
-                            // ── Point 7: packet built back to TUN ─────────────
-                            val pkt = TcpPacketBuilder.buildData(
-                                dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck, chunk,
-                            )
-                            send(pkt, "PSH|ACK data=${chunk.size}B")
-                            relaySeq = mask32(relaySeq + chunk.size)
-                            Log.d(TAG, "[7] BUILD DATA ${chunk.size}B $srcIp:$srcPort→$dstIp:$dstPort " +
-                                "seqBefore=$seqBefore seqAfter=$relaySeq relayAck=$relayAck " +
-                                "preview=${payloadPreview(chunk)}")
+                            if (state == State.ESTABLISHED) {
+                                val seqBefore = relaySeq
+                                // Zero-copy: buildData reads directly from readBuf[offset..+chunkLen]
+                                // avoiding a ByteArray allocation per chunk (saves ~1 MB GC per MB transferred).
+                                val pkt = TcpPacketBuilder.buildData(
+                                    dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck,
+                                    readBuf, offset, chunkLen,
+                                )
+                                send(pkt, "PSH|ACK data=${chunkLen}B")
+                                relaySeq = mask32(relaySeq + chunkLen)
+                                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                                    Log.d(TAG, "[7] BUILD DATA ${chunkLen}B $srcIp:$srcPort→$dstIp:$dstPort " +
+                                        "seqBefore=$seqBefore seqAfter=$relaySeq relayAck=$relayAck")
+                                }
+                            }
                         }
+                        offset += chunkLen
                     }
                 }
             } catch (_: Exception) { }
@@ -375,7 +378,7 @@ class TcpSession(
     // ── Point 8: packet written to TUN ────────────────────────────────────────
     private suspend fun send(pkt: ByteArray, desc: String = "?") {
         writeMutex.withLock {
-            Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
+            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
             tunOut.write(pkt)
             tunOut.flush()
         }
@@ -392,13 +395,14 @@ class TcpSession(
         serverOut = null
         runCatching { server?.close() }
         server = null
-        Log.d(TAG, "torn down $srcIp:$srcPort→$dstIp:$dstPort")
+        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "torn down $srcIp:$srcPort→$dstIp:$dstPort")
         onClose()
     }
 
     companion object {
-        private const val TAG                = "TcpSession"
-        private const val CONNECT_TIMEOUT_MS = 5_000
+        private const val TAG                 = "TcpSession"
+        private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
+        private const val CONNECT_TIMEOUT_MS  = 5_000
         private const val READ_BUFFER_SIZE   = 32_768
         private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
 

@@ -33,15 +33,17 @@ class PacketReader(
                 if (len == 0) continue      // EAGAIN on non-blocking fd — no packet yet
                 val packet = parser.parse(buf, len)
                 if (packet == null) {
-                    Log.d(TAG, "TUN pkt ${len}B → parser returned null (too short/malformed)")
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "TUN pkt ${len}B → parser returned null (too short/malformed)")
                     continue
                 }
-                val proto = if (packet.isIpv6) "IPv6" else when (packet.protocol) {
-                    PacketParser.PROTO_TCP -> "TCP"
-                    PacketParser.PROTO_UDP -> "UDP"
-                    else -> "proto=${packet.protocol}"
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    val proto = if (packet.isIpv6) "IPv6" else when (packet.protocol) {
+                        PacketParser.PROTO_TCP -> "TCP"
+                        PacketParser.PROTO_UDP -> "UDP"
+                        else -> "proto=${packet.protocol}"
+                    }
+                    Log.d(TAG, "TUN pkt ${len}B $proto ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${packet.tcpFlags.toString(16)}")
                 }
-                Log.d(TAG, "TUN pkt ${len}B $proto ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${packet.tcpFlags.toString(16)}")
                 emitTelemetry(packet)
                 forwarder.forward(buf, len, packet)
             }
@@ -80,8 +82,9 @@ class PacketReader(
     }
 
     companion object {
-        private const val TAG       = "PacketReader"
-        private const val TCP_SYN   = 0x02
+        private const val TAG                 = "PacketReader"
+        private const val VERBOSE_PACKET_LOGS = false   // set true to trace every TUN read in debug builds
+        private const val TCP_SYN             = 0x02
         private const val MAX_CACHE = 1_024
     }
 }
