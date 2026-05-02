@@ -44,10 +44,15 @@ class ShieldVpnService : VpnService() {
 
     private var tun: android.os.ParcelFileDescriptor? = null
     private var forwarder: PacketForwarder? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var client: GatewayClient
 
     // ── Service lifecycle ─────────────────────────────────────────────────────
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(TAG, "onCreate")
+    }
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
@@ -70,6 +75,7 @@ class ShieldVpnService : VpnService() {
 
     /** Safety net: system-initiated destroy must clean up even if ACTION_STOP was never sent. */
     override fun onDestroy() {
+        Log.i(TAG, "onDestroy vpnState=$vpnState")
         stopVpn()
         super.onDestroy()
     }
@@ -82,6 +88,10 @@ class ShieldVpnService : VpnService() {
             return
         }
         transition(VpnState.STARTING)
+        // Fresh scope on every start — the previous scope was cancelled by stopVpn() and
+        // launching into a cancelled scope throws JobCancellationException, which made the
+        // PacketReader silently never run while the TUN was up (no internet, ERR_NETWORK_CHANGED).
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
             Log.i(TAG, "step 1: startForeground")
             startAsForeground()
@@ -125,8 +135,13 @@ class ShieldVpnService : VpnService() {
                         client    = client,
                     ).run()
                     Log.i(TAG, "PacketReader exited cleanly")
-                } catch (e: IOException) {
-                    Log.w(TAG, "PacketReader exited: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "PacketReader crashed: ${e::class.java.simpleName}: ${e.message}")
+                } finally {
+                    if (vpnState == VpnState.RUNNING) {
+                        Log.w(TAG, "PacketReader exited while VPN running — stopping VPN")
+                        stopVpn()
+                    }
                 }
             }
             startHeartbeat()
@@ -184,7 +199,7 @@ class ShieldVpnService : VpnService() {
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(NOTIF_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(NOTIF_ID, notification)
         }
