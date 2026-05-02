@@ -76,9 +76,12 @@ class TcpSession(
         val seq        = readU32(buf, ihl + 4)
         val ack        = readU32(buf, ihl + 8)
         val tcpHdrLen  = ((buf[ihl + 12].toInt() and 0xFF) shr 4) * 4
-        val totalLen   = readU16(buf, 2)
+        if (tcpHdrLen < 20) return null                       // reject corrupt data-offset field
+        val payloadOffset = ihl + tcpHdrLen
+        if (payloadOffset > buf.size) return null             // header claims more than we have
+        val totalLen   = minOf(readU16(buf, 2), buf.size)     // clamp IP totalLen to actual buffer
         val payloadLen = maxOf(0, totalLen - ihl - tcpHdrLen)
-        return TcpSegment(flags, seq, ack, ihl, tcpHdrLen, ihl + tcpHdrLen, payloadLen)
+        return TcpSegment(flags, seq, ack, ihl, tcpHdrLen, payloadOffset, payloadLen)
     }
 
     // ── Point 4: payload extracted from client packet ─────────────────────────

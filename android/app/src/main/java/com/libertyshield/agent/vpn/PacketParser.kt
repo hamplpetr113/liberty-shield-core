@@ -26,7 +26,7 @@ class PacketParser {
         }
 
         val ihl      = (buf[0].toInt() and 0x0F) * 4
-        val totalLen = ((buf[2].toInt() and 0xFF) shl 8) or (buf[3].toInt() and 0xFF)
+        val totalLen = minOf(((buf[2].toInt() and 0xFF) shl 8) or (buf[3].toInt() and 0xFF), len)
         val protocol = buf[9].toInt() and 0xFF
         val srcIp    = ipString(buf, 12)
         val dstIp    = ipString(buf, 16)

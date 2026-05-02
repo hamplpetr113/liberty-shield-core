@@ -41,7 +41,8 @@ class PacketForwarder(
                 scope.launch { forwardUdp(packetBytes, len, packet) }
             }
             PacketParser.PROTO_TCP -> {
-                val flags = if (buf.size > 33) buf[33].toInt() and 0xFF else 0
+                val ihl   = (buf[0].toInt() and 0x0F) * 4
+                val flags = if (buf.size > ihl + 13) buf[ihl + 13].toInt() and 0xFF else 0
                 Log.d(TAG, "DISPATCH TCP ${packet.srcIp}:${packet.srcPort}→${packet.dstIp}:${packet.dstPort} flags=0x${flags.toString(16)} ${len}B")
                 val packetBytes = buf.copyOf(len)
                 dispatchTcp(packetBytes, packet)   // synchronous — preserves TUN packet order
