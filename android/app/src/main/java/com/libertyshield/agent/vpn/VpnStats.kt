@@ -24,6 +24,9 @@ object VpnStats {
     val dnsCacheHits = AtomicLong()
     val dnsTimeouts  = AtomicLong()
 
+    // QUIC (UDP 443) — not supported; packets are dropped so browsers fall back to TCP
+    val quicDropped  = AtomicLong()
+
     // TCP session queue health
     val tcpQueueOverflows = AtomicLong()
     val tcpQueueMaxDepth  = AtomicInteger()   // approximate peak depth across all live sessions
@@ -44,6 +47,7 @@ object VpnStats {
         append(" udpErr=").append(udpErrors.get())
         append(" dnsHit=").append(dnsCacheHits.get())
         append(" dnsTout=").append(dnsTimeouts.get())
+        append(" quicDrop=").append(quicDropped.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
     }

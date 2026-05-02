@@ -66,6 +66,16 @@ class PacketForwarder(
         val payload = buf.copyOfRange(payloadStart, len)
         val isDns   = packet.dstPort == 53
 
+        // QUIC guard — UDP 443 is QUIC (HTTP/3). The one-shot UDP relay cannot handle QUIC's
+        // persistent bidirectional streams; pretending to relay it causes broken connections.
+        // Drop QUIC datagrams here so the OS/browser detects the loss and falls back to TCP/TLS.
+        // When quicDropped reaches 1 we emit a single warning so it is visible in logcat.
+        if (packet.dstPort == QUIC_PORT) {
+            val count = VpnStats.quicDropped.incrementAndGet()
+            if (count == 1L) Log.w(TAG, "UDP 443 (QUIC/HTTP3) not supported — dropping; client should fall back to TCP")
+            return
+        }
+
         // DNS cache fast path — serve from memory, skip network entirely
         if (isDns) {
             val cached = dnsCache.get(payload)
@@ -208,6 +218,7 @@ class PacketForwarder(
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every dispatch in debug builds
         private const val DNS_TIMEOUT_MS      = 800     // tighter timeout for DNS — a miss causes visible delay
         private const val SOCKET_TIMEOUT_MS   = 2_000   // general UDP timeout
+        private const val QUIC_PORT           = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
         private const val MAX_UDP_PAYLOAD     = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
     }
 }

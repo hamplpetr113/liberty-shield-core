@@ -39,8 +39,9 @@ class ShieldService : Service() {
     override fun onDestroy() {
         sensorMonitor.stop()
         appMonitor.stop()
-        startService(Intent(this, ShieldVpnService::class.java)
-            .setAction(ShieldVpnService.ACTION_STOP))
+        // VPN lifecycle is independent of the telemetry service — do NOT stop ShieldVpnService here.
+        // Stopping VPN from this path caused the relay to go down whenever battery management
+        // killed and restarted ShieldService, breaking all internet traffic through the TUN.
         client.shutdown()
         super.onDestroy()
     }

@@ -72,7 +72,7 @@ class TcpSession(
 
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
     private suspend fun handle(buf: ByteArray) {
-        queueDepth.decrementAndGet()
+        queueDepth.updateAndGet { maxOf(0, it - 1) }
         val seg = parseTcpSegment(buf) ?: return
         if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "[3] PKT $srcIp:$srcPort→$dstIp:$dstPort " +
@@ -413,7 +413,7 @@ class TcpSession(
     companion object {
         private const val TAG                 = "TcpSession"
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
-        private const val CONNECT_TIMEOUT_MS  = 5_000
+        private const val CONNECT_TIMEOUT_MS  = 2_500
         private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
         private const val READ_BUFFER_SIZE   = 32_768
         private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
