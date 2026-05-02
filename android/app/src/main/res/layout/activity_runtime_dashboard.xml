@@ -97,6 +97,38 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
+            <!-- VPN Diagnostics -->
+            <TextView
+                android:id="@+id/header_vpn_diag"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VPN Diagnostics"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_vpn_last_stop_reason"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_stop_count"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_stop_age"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_exc_class"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_exc_msg"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
             <!-- TCP -->
             <TextView
                 android:id="@+id/header_tcp"

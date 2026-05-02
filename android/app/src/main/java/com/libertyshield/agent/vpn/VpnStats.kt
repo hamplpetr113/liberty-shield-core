@@ -3,6 +3,7 @@ package com.libertyshield.agent.vpn
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Process-wide, thread-safe counters for the VPN relay.
@@ -16,6 +17,13 @@ object VpnStats {
     val packetReaderRunning  = AtomicBoolean(false)  // PacketReader.run() is executing
     val packetReaderRestarts = AtomicLong()           // cumulative restart count
     val vpnStartTimestampMs  = AtomicLong(0L)         // wall-clock ms when TUN was established
+
+    // ── VPN shutdown diagnostics ──────────────────────────────────────────────
+    val vpnLastStopReason       = AtomicReference<String>("")
+    val vpnStopCount            = AtomicLong(0L)
+    val vpnLastStopTimestampMs  = AtomicLong(0L)
+    val vpnLastExceptionClass   = AtomicReference<String>("")
+    val vpnLastExceptionMessage = AtomicReference<String>("")
 
     // ── TCP session lifecycle ─────────────────────────────────────────────────
     val tcpSessionsActive  = AtomicLong()

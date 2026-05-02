@@ -24,6 +24,13 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var btnStartVpn:  Button
     private lateinit var btnStopVpn:   Button
 
+    // VPN diagnostics
+    private lateinit var statVpnLastStopReason: TextView
+    private lateinit var statVpnStopCount:      TextView
+    private lateinit var statVpnLastStopAge:    TextView
+    private lateinit var statVpnLastExcClass:   TextView
+    private lateinit var statVpnLastExcMsg:     TextView
+
     // VPN lifecycle
     private lateinit var statVpnEstablished:    TextView
     private lateinit var statVpnTunValid:        TextView
@@ -85,6 +92,12 @@ class RuntimeDashboardActivity : Activity() {
             )
         }
 
+        statVpnLastStopReason = findViewById(R.id.stat_vpn_last_stop_reason)
+        statVpnStopCount      = findViewById(R.id.stat_vpn_stop_count)
+        statVpnLastStopAge    = findViewById(R.id.stat_vpn_last_stop_age)
+        statVpnLastExcClass   = findViewById(R.id.stat_vpn_last_exc_class)
+        statVpnLastExcMsg     = findViewById(R.id.stat_vpn_last_exc_msg)
+
         statVpnEstablished    = findViewById(R.id.stat_vpn_established)
         statVpnTunValid       = findViewById(R.id.stat_vpn_tun_valid)
         statVpnReaderRunning  = findViewById(R.id.stat_vpn_reader_running)
@@ -125,6 +138,15 @@ class RuntimeDashboardActivity : Activity() {
         vpnStatus.setTextColor(if (vpnOn) 0xFF00CC66.toInt() else 0xFFFF4444.toInt())
         btnStartVpn.isEnabled = !vpnOn
         btnStopVpn.isEnabled  = vpnOn
+
+        // VPN diagnostics
+        val lastStopTs = VpnStats.vpnLastStopTimestampMs.get()
+        val lastStopAgeStr = if (lastStopTs == 0L) "never" else "${(System.currentTimeMillis() - lastStopTs) / 1000}s ago"
+        statVpnLastStopReason.text = "  lastStopReason      :  ${VpnStats.vpnLastStopReason.get().ifEmpty { "—" }}"
+        statVpnStopCount.text      = "  stopCount           :  ${VpnStats.vpnStopCount.get()}"
+        statVpnLastStopAge.text    = "  lastStopAge         :  $lastStopAgeStr"
+        statVpnLastExcClass.text   = "  lastExcClass        :  ${VpnStats.vpnLastExceptionClass.get().ifEmpty { "—" }}"
+        statVpnLastExcMsg.text     = "  lastExcMsg          :  ${VpnStats.vpnLastExceptionMessage.get().ifEmpty { "—" }}"
 
         // VPN lifecycle
         val startMs = VpnStats.vpnStartTimestampMs.get()

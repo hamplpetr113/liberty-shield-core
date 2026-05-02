@@ -2,6 +2,7 @@ package com.libertyshield.agent.vpn
 
 import android.net.VpnService
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -31,7 +32,7 @@ class TcpSession(
     private enum class State { CLOSED, SYN_RECEIVED, ESTABLISHED, FIN_WAIT, CLOSED_FINAL }
 
     private val sessionMutex = Mutex()
-    private var state: State = State.CLOSED
+    @Volatile private var state: State = State.CLOSED
     private var server: Socket? = null
     private var serverOut: OutputStream? = null
     private var serverJob: Job? = null
@@ -422,14 +423,17 @@ class TcpSession(
                     }
 
                     // Phase 3: one writeMutex acquisition for the entire batch
-                    writeMutex.withLock {
-                        for (i in 0 until numChunks) tunOut.write(bufs[i], 0, chunkLens[i])
-                        tunOut.flush()
+                    try {
+                        writeMutex.withLock {
+                            for (i in 0 until numChunks) tunOut.write(bufs[i], 0, chunkLens[i])
+                            tunOut.flush()
+                        }
+                    } finally {
+                        for (buf in bufs) PacketPool.release(buf)
                     }
-
-                    // Return pool buffers after the write is complete
-                    for (buf in bufs) PacketPool.release(buf)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { }
             // NonCancellable: if serverJob was cancelled externally, a plain suspend call
             // would throw CancellationException and skip teardown. Wrap so teardown always runs.
