@@ -43,6 +43,19 @@ class TcpSession(
                 "ipHdrLen=${seg.ipHdrLen} tcpHdrLen=${seg.tcpHdrLen} " +
                 "payloadOffset=${seg.payloadOffset} payloadLen=${seg.payloadLen} state=$state")
         }
+        val isSyn = seg.flags and TcpPacketBuilder.FLAG_SYN != 0
+        val isAck = seg.flags and TcpPacketBuilder.FLAG_ACK != 0
+        if (isSyn && !isAck) {
+            // onSyn() calls sock.connect() which is a blocking Java call (up to
+            // CONNECT_TIMEOUT_MS). It must NOT run inside sessionMutex — holding the
+            // mutex for 100 ms–5 s would freeze every concurrent serverJob that needs
+            // sessionMutex to send data back through the TUN (deadlock-adjacent stall).
+            // PacketReader is a single coroutine so no concurrent packet can arrive
+            // for this session while we are here — the sequential guarantee is preserved.
+            val shouldConnect = sessionMutex.withLock { state == State.CLOSED }
+            if (shouldConnect) onSyn(seg)
+            return
+        }
         sessionMutex.withLock {
             when (state) {
                 State.CLOSED       -> handleClosed(seg)
@@ -141,12 +154,13 @@ class TcpSession(
     }
 
     private suspend fun handleClosed(seg: TcpSegment) {
-        val isSyn = seg.flags and TcpPacketBuilder.FLAG_SYN != 0
+        // SYN is intercepted in handle() before the sessionMutex block and routed to
+        // onSyn() outside the lock.  Only stale non-SYN packets reach here (spurious
+        // ACK, RST, etc.) — send RST and tear down.
         val isAck = seg.flags and TcpPacketBuilder.FLAG_ACK != 0
         val isRst = seg.flags and TcpPacketBuilder.FLAG_RST != 0
         when {
             isRst -> teardown()
-            isSyn && !isAck -> onSyn(seg)
             isAck -> {
                 send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, seg.ack, 0L), "RST")
                 teardown()
@@ -158,33 +172,51 @@ class TcpSession(
         }
     }
 
+    // Called OUTSIDE sessionMutex (see handle()). sock.connect() is a blocking Java
+    // call that occupies the calling IO thread for up to CONNECT_TIMEOUT_MS. Running
+    // it inside the mutex would stall every concurrent serverJob that needs sessionMutex
+    // to flush server-response data back through the TUN.
+    //
+    // Safety: PacketReader is a single coroutine — no other packet for this session
+    // can arrive while we are here. The instance fields (relaySeq, relayAck, server,
+    // serverOut, state) are therefore safe to write without the mutex in this phase.
+    // The mutex is acquired at the end only for the TUN write (consistent lock order:
+    // sessionMutex → writeMutex).
     private suspend fun onSyn(seg: TcpSegment) {
         relaySeq = 0x1000_0000L
         relayAck = mask32(seg.seq + 1)
-        try {
-            val sock = Socket()
-            // Socket() is lazy on Android — the kernel fd is not allocated until bind/connect.
-            // protect() reads the fd; calling it before bind() returns false every time.
-            sock.bind(InetSocketAddress(0))
-            if (!vpnService.protect(sock)) {
+
+        // Socket() is lazy on Android — fd not allocated until bind/connect.
+        // protect() needs the fd; call bind() first or protect() returns false.
+        val sock = try {
+            val s = Socket()
+            s.bind(InetSocketAddress(0))
+            if (!vpnService.protect(s)) {
                 Log.w(TAG, "TCP protect() failed for $dstIp:$dstPort")
-                sock.close()
-                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true), "RST|ACK")
-                teardown()
-                return
+                s.close()
+                null
+            } else {
+                s.tcpNoDelay = true    // disable Nagle — critical for TLS handshake latency
+                s.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
+                s
             }
-            sock.tcpNoDelay = true    // disable Nagle — critical for TLS handshake latency
-            sock.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
-            server = sock
-            serverOut = sock.getOutputStream()
-            state = State.SYN_RECEIVED
-            Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort→$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
-            send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "SYN|ACK")
-            relaySeq = mask32(relaySeq + 1)
         } catch (e: Exception) {
             Log.w(TAG, "TCP connect failed $dstIp:$dstPort: ${e::class.java.simpleName}: ${e.message}")
-            send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true), "RST|ACK")
-            teardown()
+            null
+        }
+
+        sessionMutex.withLock {
+            if (sock == null) {
+                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, relayAck, ackFlag = true), "RST|ACK")
+                teardown()
+            } else {
+                server = sock
+                serverOut = sock.getOutputStream()
+                state = State.SYN_RECEIVED
+                Log.d(TAG, "SYN_RECEIVED $srcIp:$srcPort→$dstIp:$dstPort relaySeq=$relaySeq relayAck=$relayAck")
+                send(TcpPacketBuilder.buildSynAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "SYN|ACK")
+                relaySeq = mask32(relaySeq + 1)
+            }
         }
     }
 
@@ -212,8 +244,18 @@ class TcpSession(
                 teardown()
             }
             seg.flags and TcpPacketBuilder.FLAG_FIN != 0 -> {
-                Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
-                relayAck = mask32(seg.seq + 1)
+                // Forward any payload piggybacked on the FIN segment before closing.
+                // RFC 793 allows data + FIN in the same segment; ignoring the payload
+                // (relayAck += 1 instead of += payloadLen + 1) drops the last bytes of
+                // the stream and corrupts POST bodies or HTTP/1.0 responses.
+                val payload = extractPayload(buf, seg)
+                if (payload.isNotEmpty()) {
+                    Log.d(TAG, "ESTABLISHED FIN piggybacked ${payload.size}B — forwarding before close $srcIp:$srcPort→$dstIp:$dstPort")
+                    forwardToServer(payload)
+                } else {
+                    Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
+                }
+                relayAck = mask32(seg.seq + payload.size.toLong() + 1)
                 send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "FIN|ACK")
                 relaySeq = mask32(relaySeq + 1)
                 teardown()
