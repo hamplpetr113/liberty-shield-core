@@ -32,6 +32,7 @@ class PacketReader(
                 val len = stream.read(buf)
                 if (len < 0) { Log.i(TAG, "TUN read returned -1 — fd closed"); break }
                 if (len == 0) continue      // EAGAIN on non-blocking fd — no packet yet
+                VpnStats.packetReaderTotal.incrementAndGet()
                 try {
                     val packet = parser.parse(buf, len)
                     if (packet == null) {

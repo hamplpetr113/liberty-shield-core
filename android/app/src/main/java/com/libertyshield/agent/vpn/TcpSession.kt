@@ -239,7 +239,10 @@ class TcpSession(
                 val t0 = System.currentTimeMillis()
                 s.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
                 val elapsed = System.currentTimeMillis() - t0
-                if (elapsed > CONNECT_WARN_MS) Log.w(TAG, "TCP slow connect ${elapsed}ms $dstIp:$dstPort")
+                if (elapsed > CONNECT_WARN_MS) {
+                    Log.w(TAG, "TCP slow connect ${elapsed}ms $dstIp:$dstPort")
+                    VpnStats.tcpSlowConnects.incrementAndGet()
+                }
                 s
             }
         } catch (e: Exception) {

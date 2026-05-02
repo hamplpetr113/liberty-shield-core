@@ -100,6 +100,7 @@ class PacketForwarder(
                 // DNS gets a tighter timeout — a missed DNS reply causes visible page-load delay
                 socket.soTimeout = if (isDns) DNS_TIMEOUT_MS else SOCKET_TIMEOUT_MS
 
+                val dnsT0 = if (isDns) System.currentTimeMillis() else 0L
                 socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(packet.dstIp), packet.dstPort))
                 VpnStats.udpRequestsSent.incrementAndGet()
                 if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP → ${packet.dstIp}:${packet.dstPort} (${payloadLen}B)")
@@ -111,6 +112,10 @@ class PacketForwarder(
                 try {
                     socket.receive(respDgram)
                     VpnStats.udpResponsesRecv.incrementAndGet()
+                    if (isDns) {
+                        VpnStats.dnsTotalLatencyMs.addAndGet(System.currentTimeMillis() - dnsT0)
+                        VpnStats.dnsLatencyCount.incrementAndGet()
+                    }
                     val respPayload = respBuf.copyOf(respDgram.length)
                     if (isDns) dnsCache.put(payload, respPayload)
                     val response = buildIpv4UdpPacket(
