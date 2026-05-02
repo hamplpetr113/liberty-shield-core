@@ -59,20 +59,20 @@ class DnsCache(private val ttlMs: Long = TTL_MS) {
         cache[cacheKey(query)] = Entry(response.copyOf(), System.currentTimeMillis() + ttlMs)
     }
 
-    /** Cache key = hex of query payload with bytes 0–1 (transaction ID) zeroed. */
+    /** Cache key = hex of query[2..] — transaction ID (bytes 0–1) explicitly excluded. */
     private fun cacheKey(query: ByteArray): String {
-        val sb = StringBuilder(query.size * 2)
-        sb.append("0000")
-        for (i in 2 until query.size) {
-            val b = query[i].toInt() and 0xFF
-            if (b < 16) sb.append('0')
-            sb.append(b.toString(16))
+        val body = query.copyOfRange(2, query.size)
+        val sb = StringBuilder(body.size * 2)
+        for (b in body) {
+            val v = b.toInt() and 0xFF
+            if (v < 16) sb.append('0')
+            sb.append(v.toString(16))
         }
         return sb.toString()
     }
 
     companion object {
-        const val TTL_MS      = 45_000L  // 45-second TTL — covers a typical browser page-load burst
-        const val MAX_ENTRIES = 256
+        const val TTL_MS      = 300_000L  // 5-minute TTL
+        const val MAX_ENTRIES = 1024
     }
 }
