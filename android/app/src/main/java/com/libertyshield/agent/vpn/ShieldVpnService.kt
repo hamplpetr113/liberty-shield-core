@@ -126,6 +126,12 @@ class ShieldVpnService : VpnService() {
             val tunFd = tun!!
             val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
             forwarder = fwd
+            // Transition to RUNNING before launching the coroutine so the PacketReader's
+            // while-guard always sees RUNNING on first check. Launching first and transitioning
+            // after was a race: the IO thread could evaluate (vpnState == RUNNING) while the
+            // main thread had not yet called transition(), causing the relay to silently never
+            // start while the TUN was up — resulting in broken internet with counters stuck at 0.
+            transition(VpnState.RUNNING)
             scope.launch {
                 var restarts = 0
                 while (isActive && vpnState == VpnState.RUNNING) {
@@ -157,7 +163,6 @@ class ShieldVpnService : VpnService() {
                 }
             }
             startHeartbeat()
-            transition(VpnState.RUNNING)
         } catch (e: Exception) {
             Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
             transition(VpnState.FAILED)

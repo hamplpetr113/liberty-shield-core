@@ -26,6 +26,18 @@ class LauncherActivity : Activity() {
         }
     }
 
+    // Called on every return to the foreground (back from RuntimeDashboardActivity, screen-off/on,
+    // or app switcher). Calling startForegroundService() on an already-running service is a no-op
+    // (Android calls onStartCommand but onCreate is not repeated). This ensures ShieldService is
+    // restarted if battery optimisation killed it while the activity was in the background.
+    override fun onResume() {
+        super.onResume()
+        if (VpnService.prepare(this) == null) {
+            // Permission is already granted — safe to (re)start the service.
+            startShieldService()
+        }
+    }
+
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQUEST_VPN && resultCode == RESULT_OK) {
@@ -47,7 +59,7 @@ class LauncherActivity : Activity() {
             textSize = 26f
         })
         root.addView(TextView(this).apply {
-            text = "VPN protection active"
+            text = "VPN relay starting…"
             textSize = 14f
             setPadding(0, 8, 0, 48)
         })
