@@ -38,6 +38,11 @@ class TcpSession(
     private var relaySeq: Long = 0L
     private var relayAck: Long = 0L
 
+    // Pre-parsed IP ints: avoid String.split() allocations in the packet-build hot path.
+    // Parsed once at session construction; srcIp/dstIp strings remain for logging.
+    private val srcIpInt: Int = ipToInt(srcIp)
+    private val dstIpInt: Int = ipToInt(dstIp)
+
     // Per-session FIFO queue. PacketReader enqueues instantly (never blocks).
     // A dedicated coroutine drains it, so each session is independent — a slow
     // sock.connect() on session A cannot delay DNS or a new session B.
@@ -398,25 +403,32 @@ class TcpSession(
                     }
                     if (!active) continue
 
-                    // Phase 2: build all packets — allocations outside any lock
-                    val packets = ArrayList<ByteArray>(numChunks)
-                    var off = 0
+                    // Phase 2: borrow pool buffers, build packets into them — zero per-packet allocation.
+                    // chunkLens[i] starts as payload length; after buildDataInto it holds total pkt length.
+                    val bufs = ArrayList<ByteArray>(numChunks)
+                    var off  = 0
                     for (i in 0 until numChunks) {
-                        packets.add(TcpPacketBuilder.buildData(
-                            dstIp, srcIp, dstPort, srcPort, seqSnaps[i], ackSnap,
-                            readBuf, off, chunkLens[i],
-                        ))
+                        val payloadLen = chunkLens[i]
+                        val buf = PacketPool.acquire()
+                        bufs.add(buf)
+                        chunkLens[i] = TcpPacketBuilder.buildDataInto(
+                            buf, dstIpInt, srcIpInt, dstPort, srcPort,
+                            seqSnaps[i], ackSnap, readBuf, off, payloadLen,
+                        )
                         if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
-                            Log.d(TAG, "[7] BUILD DATA ${chunkLens[i]}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
+                            Log.d(TAG, "[7] BUILD DATA ${payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
                         }
-                        off += chunkLens[i]
+                        off += payloadLen
                     }
 
                     // Phase 3: one writeMutex acquisition for the entire batch
                     writeMutex.withLock {
-                        for (pkt in packets) tunOut.write(pkt)
+                        for (i in 0 until numChunks) tunOut.write(bufs[i], 0, chunkLens[i])
                         tunOut.flush()
                     }
+
+                    // Return pool buffers after the write is complete
+                    for (buf in bufs) PacketPool.release(buf)
                 }
             } catch (_: Exception) { }
             // NonCancellable: if serverJob was cancelled externally, a plain suspend call
@@ -465,5 +477,12 @@ class TcpSession(
         // space, meaning those bytes were already forwarded. Used to detect client retransmits.
         private fun seq32Covered(nextSeq: Long, relayAck: Long): Boolean =
             ((relayAck - nextSeq) and 0xFFFF_FFFFL) < 0x8000_0000L
+
+        /** Parses "a.b.c.d" into a packed 32-bit int once at session construction. */
+        private fun ipToInt(ip: String): Int {
+            val p = ip.split(".")
+            return (p[0].toInt() shl 24) or (p[1].toInt() shl 16) or
+                   (p[2].toInt() shl  8) or  p[3].toInt()
+        }
     }
 }
