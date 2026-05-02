@@ -66,15 +66,14 @@ class PacketForwarder(
         val payload = buf.copyOfRange(payloadStart, len)
         val isDns   = packet.dstPort == 53
 
-        // QUIC guard — UDP 443 is QUIC (HTTP/3). The one-shot UDP relay cannot handle QUIC's
-        // persistent bidirectional streams; pretending to relay it causes broken connections.
-        // Drop QUIC datagrams here so the OS/browser detects the loss and falls back to TCP/TLS.
-        // When quicDropped reaches 1 we emit a single warning so it is visible in logcat.
-        if (packet.dstPort == QUIC_PORT) {
-            val count = VpnStats.quicDropped.incrementAndGet()
-            if (count == 1L) Log.w(TAG, "UDP 443 (QUIC/HTTP3) not supported — dropping; client should fall back to TCP")
-            return
-        }
+        // QUIC guard disabled — dropping UDP 443 caused Chrome to stall instead of falling back
+        // to TCP immediately. Passing QUIC through the one-shot path for now so browsing is not
+        // blocked. TODO: implement persistent UDP relay for QUIC/HTTP3.
+        // if (packet.dstPort == QUIC_PORT) {
+        //     val count = VpnStats.quicDropped.incrementAndGet()
+        //     if (count == 1L) Log.w(TAG, "UDP 443 (QUIC/HTTP3) not supported — dropping; client should fall back to TCP")
+        //     return
+        // }
 
         // DNS cache fast path — serve from memory, skip network entirely
         if (isDns) {
