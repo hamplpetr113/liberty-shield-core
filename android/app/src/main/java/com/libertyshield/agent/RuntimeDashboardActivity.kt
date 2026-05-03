@@ -39,11 +39,17 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statVpnUptime:          TextView
 
     // TCP
-    private lateinit var statTcpActive:          TextView
-    private lateinit var statTcpCreated:         TextView
-    private lateinit var statTcpClosed:          TextView
-    private lateinit var statTcpQueueDepth:      TextView
-    private lateinit var statTcpHighQueueEvents: TextView
+    private lateinit var statTcpActive:            TextView
+    private lateinit var statTcpCreated:           TextView
+    private lateinit var statTcpClosed:            TextView
+    private lateinit var statTcpQueueDepth:        TextView
+    private lateinit var statTcpHighQueueEvents:   TextView
+    private lateinit var statTcpConnectAvgMs:      TextView
+    private lateinit var statTcpConnectMaxMs:      TextView
+    private lateinit var statTcpFirstByteAvgMs:    TextView
+    private lateinit var statTcpFirstByteMaxMs:    TextView
+    private lateinit var statTcpNoFirstByte:       TextView
+    private lateinit var statTcpConnectFailures:   TextView
 
     // DNS
     private lateinit var statDnsCacheHits:       TextView

@@ -373,11 +373,11 @@ class TcpSession(
     private fun startServerReader() {
         val sock = server ?: return
         serverJob = scope.launch {
+            var firstByteReceived = false
             try {
                 val inp     = sock.getInputStream()
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n       = 0
-                var firstByteReceived = false
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
                     if (!firstByteReceived && n > 0) {
                         firstByteReceived = true
@@ -452,6 +452,7 @@ class TcpSession(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) { }
+            if (!firstByteReceived && connectDoneMs > 0L) VpnStats.tcpSessionsNoFirstByte.incrementAndGet()
             // NonCancellable: if serverJob was cancelled externally, a plain suspend call
             // would throw CancellationException and skip teardown. Wrap so teardown always runs.
             withContext(NonCancellable) { sessionMutex.withLock { teardown() } }
