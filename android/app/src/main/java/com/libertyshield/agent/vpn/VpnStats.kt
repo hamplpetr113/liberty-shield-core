@@ -39,6 +39,25 @@ object VpnStats {
     // ── TCP connect latency outliers ──────────────────────────────────────────
     val tcpSlowConnects = AtomicLong()
 
+    // ── TCP latency diagnostics ───────────────────────────────────────────────
+    val tcpConnectCount        = AtomicLong()
+    val tcpConnectTotalMs      = AtomicLong()
+    val tcpConnectMaxMs        = AtomicLong()
+    val tcpFirstByteCount      = AtomicLong()
+    val tcpFirstByteTotalMs    = AtomicLong()
+    val tcpFirstByteMaxMs      = AtomicLong()
+    val tcpSessionsNoFirstByte = AtomicLong()
+    val tcpConnectFailures     = AtomicLong()
+
+    /** CAS loop — safely records a new maximum without a lock. */
+    fun updateMax(field: AtomicLong, value: Long) {
+        var cur = field.get()
+        while (value > cur) {
+            if (field.compareAndSet(cur, value)) break
+            cur = field.get()
+        }
+    }
+
     // ── UDP relay (one-shot per request) ──────────────────────────────────────
     val udpRequestsSent     = AtomicLong()
     val udpResponsesRecv    = AtomicLong()

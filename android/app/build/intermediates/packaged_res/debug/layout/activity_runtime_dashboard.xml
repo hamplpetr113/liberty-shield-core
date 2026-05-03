@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#000000">
+
+    <TextView
+        android:id="@+id/dashboard_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Liberty Shield — Runtime Dashboard"
+        android:textSize="18sp"
+        android:textColor="#FFFFFF"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/dashboard_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Refreshes every 1 s"
+        android:textSize="11sp"
+        android:textColor="#888888"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/vpn_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:paddingBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingBottom="16dp">
+
+        <Button
+            android:id="@+id/btn_start_vpn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="Start VPN" />
+
+        <Button
+            android:id="@+id/btn_stop_vpn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stop VPN" />
+
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- VPN -->
+            <TextView
+                android:id="@+id/header_vpn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VPN"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_vpn_established"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_tun_valid"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_reader_running"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_reader_restarts"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_uptime"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <!-- VPN Diagnostics -->
+            <TextView
+                android:id="@+id/header_vpn_diag"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VPN Diagnostics"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_vpn_last_stop_reason"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_stop_count"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_stop_age"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_exc_class"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vpn_last_exc_msg"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <!-- TCP -->
+            <TextView
+                android:id="@+id/header_tcp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TCP"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_tcp_active"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_created"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_closed"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_queue_depth"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_high_queue_events"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <!-- DNS -->
+            <TextView
+                android:id="@+id/header_dns"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="DNS"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_dns_cache_hits"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_dns_timeouts"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_dns_avg_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <!-- UDP -->
+            <TextView
+                android:id="@+id/header_udp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="UDP"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_udp_sent"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_udp_recv"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_udp_errors"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_udp_drops"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <!-- QUIC -->
+            <TextView
+                android:id="@+id/header_quic"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="QUIC"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_quic_dropped"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <!-- Connection -->
+            <TextView
+                android:id="@+id/header_conn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Connection"
+                android:textSize="13sp"
+                android:textColor="#00CC66"
+                android:textStyle="bold"
+                android:paddingTop="16dp"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_slow_connects"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD"
+                android:paddingBottom="16dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

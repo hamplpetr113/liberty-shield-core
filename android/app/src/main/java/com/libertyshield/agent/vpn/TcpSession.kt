@@ -44,6 +44,10 @@ class TcpSession(
     private val srcIpInt: Int = ipToInt(srcIp)
     private val dstIpInt: Int = ipToInt(dstIp)
 
+    // Latency diagnostics — written by onSyn(), read by startServerReader().
+    // @Volatile: onSyn() runs in queueJob, startServerReader() runs in serverJob.
+    @Volatile private var connectDoneMs: Long = 0L
+
     // Per-session FIFO queue. PacketReader enqueues instantly (never blocks).
     // A dedicated coroutine drains it, so each session is independent — a slow
     // sock.connect() on session A cannot delay DNS or a new session B.
@@ -253,6 +257,10 @@ class TcpSession(
                 val t0 = System.currentTimeMillis()
                 s.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
                 val elapsed = System.currentTimeMillis() - t0
+                connectDoneMs = t0 + elapsed
+                VpnStats.tcpConnectCount.incrementAndGet()
+                VpnStats.tcpConnectTotalMs.addAndGet(elapsed)
+                VpnStats.updateMax(VpnStats.tcpConnectMaxMs, elapsed)
                 if (elapsed > CONNECT_WARN_MS) {
                     Log.w(TAG, "TCP slow connect ${elapsed}ms $dstIp:$dstPort")
                     VpnStats.tcpSlowConnects.incrementAndGet()
@@ -261,6 +269,7 @@ class TcpSession(
             }
         } catch (e: Exception) {
             Log.w(TAG, "TCP connect failed $dstIp:$dstPort: ${e::class.java.simpleName}: ${e.message}")
+            VpnStats.tcpConnectFailures.incrementAndGet()
             null
         }
 
@@ -368,7 +377,15 @@ class TcpSession(
                 val inp     = sock.getInputStream()
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n       = 0
+                var firstByteReceived = false
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
+                    if (!firstByteReceived && n > 0) {
+                        firstByteReceived = true
+                        val fbLatency = System.currentTimeMillis() - connectDoneMs
+                        VpnStats.tcpFirstByteCount.incrementAndGet()
+                        VpnStats.tcpFirstByteTotalMs.addAndGet(fbLatency)
+                        VpnStats.updateMax(VpnStats.tcpFirstByteMaxMs, fbLatency)
+                    }
                     // ── Point 6: bytes read from server socket ─────────────────
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
                     // Split into MSS-sized chunks (MTU 1500 → MSS 1460).

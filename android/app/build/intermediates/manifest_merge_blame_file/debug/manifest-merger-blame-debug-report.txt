@@ -1,0 +1,154 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.libertyshield.agent"
+4    android:versionCode="1"
+5    android:versionName="0.1" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="34" />
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:5:5-67
+11-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:5:22-64
+12    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+12-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:6:5-77
+12-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:6:22-74
+13    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+13-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:7:5-87
+13-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:7:22-84
+14    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+14-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:8:5-94
+14-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:8:22-91
+15    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+15-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:9:5-10:60
+15-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:9:22-75
+16    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+16-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:11:5-79
+16-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:11:22-76
+17    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+17-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:12:5-79
+17-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:12:22-76
+18    <uses-permission android:name="android.permission.BODY_SENSORS" />
+18-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:13:5-71
+18-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:13:22-68
+19    <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
+19-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:14:5-15:60
+19-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:14:22-72
+20
+21    <permission
+21-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
+22        android:name="com.libertyshield.agent.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+22-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:23:9-81
+23        android:protectionLevel="signature" />
+23-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:24:9-44
+24
+25    <uses-permission android:name="com.libertyshield.agent.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+25-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:26:5-97
+25-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:26:22-94
+26
+27    <application
+27-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:17:5-71:19
+28        android:allowBackup="false"
+28-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:19:9-36
+29        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+29-->[androidx.core:core:1.12.0] C:\Users\phamp\.gradle\caches\8.9\transforms\f6664e1278ea3ad5097d1236758d4041\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
+30        android:debuggable="true"
+31        android:extractNativeLibs="false"
+32        android:label="Liberty Shield Agent" >
+32-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:18:9-45
+33        <service
+33-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:20:9-24:56
+34            android:name="com.libertyshield.agent.ShieldService"
+34-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:21:13-42
+35            android:enabled="true"
+35-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:22:13-35
+36            android:exported="false"
+36-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:23:13-37
+37            android:foregroundServiceType="dataSync" />
+37-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:24:13-53
+38
+39        <!--
+40             exported="true" is required: the Android VPN framework must be able to bind
+41             to this service to manage the VPN lifecycle and display the system key icon.
+42             BIND_VPN_SERVICE permission restricts binding to the platform only.
+43        -->
+44        <service
+44-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:29:9-38:19
+45            android:name="com.libertyshield.agent.vpn.ShieldVpnService"
+45-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:30:13-49
+46            android:enabled="true"
+46-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:31:13-35
+47            android:exported="true"
+47-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:32:13-36
+48            android:foregroundServiceType="connectedDevice"
+48-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:33:13-60
+49            android:permission="android.permission.BIND_VPN_SERVICE" >
+49-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:34:13-69
+50            <intent-filter>
+50-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:35:13-37:29
+51                <action android:name="android.net.VpnService" />
+51-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:36:17-65
+51-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:36:25-62
+52            </intent-filter>
+53        </service>
+54
+55        <activity
+55-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:40:9-48:20
+56            android:name="com.libertyshield.agent.LauncherActivity"
+56-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:41:13-45
+57            android:exported="true"
+57-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:42:13-36
+58            android:launchMode="singleTop" >
+58-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:43:13-43
+59            <intent-filter>
+59-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:44:13-47:29
+60                <action android:name="android.intent.action.MAIN" />
+60-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:45:17-69
+60-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:45:25-66
+61
+62                <category android:name="android.intent.category.LAUNCHER" />
+62-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:46:17-77
+62-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:46:27-74
+63            </intent-filter>
+64        </activity>
+65        <activity
+65-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:50:9-53:49
+66            android:name="com.libertyshield.agent.RuntimeDashboardActivity"
+66-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:51:13-53
+67            android:exported="false"
+67-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:52:13-37
+68            android:label="Runtime Dashboard" />
+68-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:53:13-46
+69        <activity
+69-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:55:9-58:75
+70            android:name="com.libertyshield.agent.VpnPermissionActivity"
+70-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:56:13-50
+71            android:exported="false"
+71-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:57:13-37
+72            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+72-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:58:13-72
+73
+74        <!-- TEST MODE: two-phone harness — not for production -->
+75        <activity
+75-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:61:9-64:53
+76            android:name="com.libertyshield.agent.test.TestModeActivity"
+76-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:62:13-50
+77            android:exported="true"
+77-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:63:13-36
+78            android:label="[TEST] Liberty Shield" />
+78-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:64:13-50
+79
+80        <service
+80-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:66:9-70:56
+81            android:name="com.libertyshield.agent.test.TestModeService"
+81-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:67:13-49
+82            android:enabled="true"
+82-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:68:13-35
+83            android:exported="false"
+83-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:69:13-37
+84            android:foregroundServiceType="dataSync" />
+84-->C:\Users\phamp\liberty-shield\android\app\src\main\AndroidManifest.xml:70:13-53
+85    </application>
+86
+87</manifest>
