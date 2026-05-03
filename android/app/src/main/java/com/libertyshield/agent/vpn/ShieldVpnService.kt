@@ -2,6 +2,7 @@ package com.libertyshield.agent.vpn
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.Service
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -20,7 +21,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.IOException
 
 class ShieldVpnService : VpnService() {
 
@@ -135,6 +135,7 @@ class ShieldVpnService : VpnService() {
                 ?: run {
                     Log.e(TAG, "establish() returned null — permission revoked or another VPN is active")
                     recordStopReason("ESTABLISH_NULL")
+                    cleanupAbortedStart()
                     transition(VpnState.FAILED)
                     stopSelf()
                     return
@@ -195,12 +196,36 @@ class ShieldVpnService : VpnService() {
         } catch (e: Exception) {
             Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
             recordStopReason("START_EXCEPTION", e)
+            cleanupAbortedStart()
             transition(VpnState.FAILED)
             stopSelf()
         }
     }
 
+    /**
+     * Tear down resources after [startVpn] fails before a healthy RUNNING session.
+     * Safe to call when [vpnState] is STARTING or from the establish()-null branch.
+     */
+    private fun cleanupAbortedStart() {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        }
+        forwarder?.shutdown()
+        forwarder = null
+        runCatching { tun?.close() }
+        tun = null
+        scope.cancel()
+        if (::client.isInitialized) client.shutdown()
+    }
+
     private fun stopVpn() {
+        // Idempotent / safe from RUNNING, STARTING, or FAILED — only a settled STOP or
+        // in-progress STOPPING is ignored.
         if (vpnState == VpnState.STOPPED || vpnState == VpnState.STOPPING) {
             Log.w(TAG, "stopVpn() called in state $vpnState — ignoring")
             return
@@ -212,7 +237,7 @@ class ShieldVpnService : VpnService() {
         VpnStats.vpnStartTimestampMs.set(0L)
         // Close the TUN fd first so PacketReader.run()'s blocking stream.read() throws
         // IOException immediately and the coroutine exits before we cancel the scope.
-        tun?.close()
+        runCatching { tun?.close() }
         tun = null
         forwarder?.shutdown()
         forwarder = null
