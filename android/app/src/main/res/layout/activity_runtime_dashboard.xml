@@ -81,6 +81,10 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
+            <TextView android:id="@+id/stat_vpn_runtime_recoveries"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
             <TextView android:id="@+id/stat_vpn_tun_valid"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />

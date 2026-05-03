@@ -32,7 +32,8 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statVpnLastExcMsg:     TextView
 
     // VPN lifecycle
-    private lateinit var statVpnEstablished:    TextView
+    private lateinit var statVpnEstablished:       TextView
+    private lateinit var statVpnRuntimeRecoveries: TextView
     private lateinit var statVpnTunValid:        TextView
     private lateinit var statVpnReaderRunning:   TextView
     private lateinit var statVpnReaderRestarts:  TextView
@@ -104,7 +105,8 @@ class RuntimeDashboardActivity : Activity() {
         statVpnLastExcClass   = findViewById(R.id.stat_vpn_last_exc_class)
         statVpnLastExcMsg     = findViewById(R.id.stat_vpn_last_exc_msg)
 
-        statVpnEstablished    = findViewById(R.id.stat_vpn_established)
+        statVpnEstablished       = findViewById(R.id.stat_vpn_established)
+        statVpnRuntimeRecoveries = findViewById(R.id.stat_vpn_runtime_recoveries)
         statVpnTunValid       = findViewById(R.id.stat_vpn_tun_valid)
         statVpnReaderRunning  = findViewById(R.id.stat_vpn_reader_running)
         statVpnReaderRestarts = findViewById(R.id.stat_vpn_reader_restarts)
@@ -164,7 +166,8 @@ class RuntimeDashboardActivity : Activity() {
         val startMs = VpnStats.vpnStartTimestampMs.get()
         val uptimeStr = if (startMs == 0L) "not started"
                         else "${(System.currentTimeMillis() - startMs) / 1000}s"
-        statVpnEstablished.text    = "  vpnEstablished      :  ${VpnStats.vpnEstablished.get()}"
+        statVpnEstablished.text       = "  vpnEstablished      :  ${VpnStats.vpnEstablished.get()}"
+        statVpnRuntimeRecoveries.text = "  runtimeRecoveries   :  ${VpnStats.runtimeRecoveries.get()}"
         statVpnTunValid.text       = "  tunFdValid          :  ${VpnStats.tunFdValid.get()}"
         statVpnReaderRunning.text  = "  packetReaderRunning :  ${VpnStats.packetReaderRunning.get()}"
         statVpnReaderRestarts.text = "  readerRestarts      :  ${VpnStats.packetReaderRestarts.get()}"

@@ -47,6 +47,7 @@ class ShieldVpnService : VpnService() {
     private var forwarder: PacketForwarder? = null
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var client: GatewayClient
+    private var heartbeatJob: kotlinx.coroutines.Job? = null
 
     // ── Service lifecycle ─────────────────────────────────────────────────────
 
@@ -154,52 +155,121 @@ class ShieldVpnService : VpnService() {
             // main thread had not yet called transition(), causing the relay to silently never
             // start while the TUN was up — resulting in broken internet with counters stuck at 0.
             transition(VpnState.RUNNING)
-            scope.launch {
-                var restarts = 0
-                while (isActive && vpnState == VpnState.RUNNING) {
-                    if (restarts > 0) Log.w(TAG, "PacketReader restarting (attempt $restarts of $MAX_READER_RESTARTS)")
-                    try {
-                        VpnStats.packetReaderRunning.set(true)
-                        PacketReader(
-                            stream    = FileInputStream(tunFd.fileDescriptor),
-                            forwarder = fwd,
-                            parser    = PacketParser(),
-                            tracker   = ConnectionTracker(this@ShieldVpnService),
-                            client    = client,
-                        ).run()
-                        VpnStats.packetReaderRunning.set(false)
-                        recordStopReason("PACKET_READER_EOF")
-                        Log.i(TAG, "PacketReader exited cleanly")
-                        break  // clean exit (TUN closed or EOF) — do not restart
-                    } catch (e: CancellationException) {
-                        VpnStats.packetReaderRunning.set(false)
-                        throw e   // scope is cancelling — propagate, don't treat as a crash
-                    } catch (e: Exception) {
-                        VpnStats.packetReaderRunning.set(false)
-                        recordStopReason("PACKET_READER_CRASH attempt=$restarts", e)
-                        Log.e("VPN_CRASH", "Packet loop crashed", e)
-                        restarts++
-                        VpnStats.packetReaderRestarts.set(restarts.toLong())
-                        if (restarts > MAX_READER_RESTARTS || vpnState != VpnState.RUNNING) break
-                        val backoff = minOf(RESTART_DELAY_MS * restarts, MAX_RESTART_DELAY_MS)
-                        Log.w(TAG, "Restarting PacketReader in ${backoff}ms")
-                        delay(backoff)
-                    }
-                }
-                if (vpnState == VpnState.RUNNING) {
-                    Log.w(TAG, "PacketReader permanently exited while VPN running — stopping VPN")
-                    recordStopReason(if (restarts > MAX_READER_RESTARTS) "PACKET_READER_MAX_RESTARTS" else "PACKET_READER_PERMANENT_EXIT")
-                    stopVpn()
-                }
-            }
+            launchPacketReader(fwd, tunFd)
             startHeartbeat()
         } catch (e: Exception) {
             Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
-            recordStopReason("START_EXCEPTION", e)
-            cleanupAbortedStart()
-            transition(VpnState.FAILED)
-            stopSelf()
+            if (tun != null) {
+                // TUN was already established — keep it alive and recover the runtime layer.
+                recoverRuntime("START_EXCEPTION", e)
+            } else {
+                recordStopReason("START_EXCEPTION", e)
+                cleanupAbortedStart()
+                transition(VpnState.FAILED)
+                stopSelf()
+            }
         }
+    }
+
+    // ── PacketReader supervisor loop ──────────────────────────────────────────
+
+    /**
+     * Launches the PacketReader supervisor coroutine on the service scope.
+     * On exhausting [MAX_READER_RESTARTS], triggers [recoverRuntime] instead of stopping — the
+     * TUN stays alive, sessions are reset, and a fresh reader is launched after [RECOVERY_DELAY_MS].
+     */
+    private fun launchPacketReader(fwd: PacketForwarder, tunFd: android.os.ParcelFileDescriptor) {
+        scope.launch {
+            var restarts = 0
+            while (isActive && vpnState == VpnState.RUNNING) {
+                if (restarts > 0) Log.w(TAG, "PacketReader restarting (attempt $restarts of $MAX_READER_RESTARTS)")
+                try {
+                    VpnStats.packetReaderRunning.set(true)
+                    PacketReader(
+                        stream    = FileInputStream(tunFd.fileDescriptor),
+                        forwarder = fwd,
+                        parser    = PacketParser(),
+                        tracker   = ConnectionTracker(this@ShieldVpnService),
+                        client    = client,
+                    ).run()
+                    VpnStats.packetReaderRunning.set(false)
+                    recordStopReason("PACKET_READER_EOF")
+                    Log.i(TAG, "PacketReader exited cleanly")
+                    break
+                } catch (e: CancellationException) {
+                    VpnStats.packetReaderRunning.set(false)
+                    throw e
+                } catch (e: Exception) {
+                    VpnStats.packetReaderRunning.set(false)
+                    recordStopReason("PACKET_READER_CRASH attempt=$restarts", e)
+                    Log.e("VPN_CRASH", "Packet loop crashed", e)
+                    restarts++
+                    VpnStats.packetReaderRestarts.addAndGet(1L)
+                    if (restarts > MAX_READER_RESTARTS || vpnState != VpnState.RUNNING) break
+                    val backoff = minOf(RESTART_DELAY_MS * restarts, MAX_RESTART_DELAY_MS)
+                    Log.w(TAG, "Restarting PacketReader in ${backoff}ms")
+                    delay(backoff)
+                }
+            }
+            VpnStats.packetReaderRunning.set(false)
+            if (vpnState == VpnState.RUNNING) {
+                val reason = if (restarts > MAX_READER_RESTARTS) "PACKET_READER_MAX_RESTARTS"
+                             else "PACKET_READER_PERMANENT_EXIT"
+                Log.w(TAG, "PacketReader permanently exited — triggering runtime recovery: $reason")
+                recoverRuntime(reason)
+            }
+        }
+    }
+
+    // ── Runtime self-healing ──────────────────────────────────────────────────
+
+    /**
+     * Recovers from a runtime failure without touching the TUN fd.
+     *
+     * Sequence:
+     *  1. Shut down the stale [PacketForwarder] (closes all TCP sessions).
+     *  2. Create a fresh [PacketForwarder] on the same TUN file descriptor.
+     *  3. After [RECOVERY_DELAY_MS], relaunch the PacketReader supervisor.
+     *
+     * Called from the PacketReader supervisor coroutine (max-restarts path) and from
+     * [startVpn]'s catch block when [establish] already succeeded.
+     * Never calls [stopSelf] — the service and TUN stay alive.
+     */
+    private fun recoverRuntime(reason: String, error: Throwable? = null) {
+        if (vpnState != VpnState.RUNNING && vpnState != VpnState.STARTING) {
+            Log.w(TAG, "recoverRuntime: vpnState=$vpnState — skipping")
+            return
+        }
+        val count = VpnStats.runtimeRecoveries.incrementAndGet()
+        Log.w(TAG, "recoverRuntime #$count reason=$reason error=${error?.javaClass?.simpleName}: ${error?.message}", error)
+        if (error != null) {
+            VpnStats.vpnLastExceptionClass.set(error.javaClass.simpleName)
+            VpnStats.vpnLastExceptionMessage.set(error.message ?: "")
+        }
+        val tunFd = tun ?: run {
+            Log.e(TAG, "recoverRuntime: tun is null — cannot recover")
+            recordStopReason("RECOVER_TUN_NULL")
+            stopVpn()
+            return
+        }
+        // If we arrived here from a startVpn exception before RUNNING was set, finish the transition.
+        if (vpnState != VpnState.RUNNING) {
+            VpnStats.vpnEstablished.set(true)
+            VpnStats.tunFdValid.set(true)
+            if (VpnStats.vpnStartTimestampMs.get() == 0L) VpnStats.vpnStartTimestampMs.set(System.currentTimeMillis())
+            transition(VpnState.RUNNING)
+        }
+        forwarder?.shutdown()
+        val newFwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
+        forwarder = newFwd
+        scope.launch {
+            delay(RECOVERY_DELAY_MS)
+            if (isActive && vpnState == VpnState.RUNNING) {
+                Log.i(TAG, "recoverRuntime: relaunching PacketReader after ${RECOVERY_DELAY_MS}ms")
+                launchPacketReader(newFwd, tunFd)
+            }
+        }
+        startHeartbeat()  // no-op if already running; ensures heartbeat started on STARTING→RUNNING path
     }
 
     /**
@@ -250,7 +320,8 @@ class ShieldVpnService : VpnService() {
     // ── Heartbeat ─────────────────────────────────────────────────────────────
 
     private fun startHeartbeat() {
-        scope.launch {
+        if (heartbeatJob?.isActive == true) return  // already running — don't spawn a duplicate
+        heartbeatJob = scope.launch {
             while (isActive) {
                 delay(HEARTBEAT_MS)
                 Log.i(TAG, "heartbeat state=$vpnState ${VpnStats.summary()}")
@@ -291,5 +362,6 @@ class ShieldVpnService : VpnService() {
         private const val MAX_READER_RESTARTS  = 5
         private const val RESTART_DELAY_MS     = 500L    // base backoff; multiplied by attempt number
         private const val MAX_RESTART_DELAY_MS = 5_000L  // caps backoff at 5 s
+        private const val RECOVERY_DELAY_MS    = 2_000L  // pause before restarting after full recovery
     }
 }

@@ -75,6 +75,9 @@ object VpnStats {
     // ── QUIC (UDP 443) ────────────────────────────────────────────────────────
     val quicDropped = AtomicLong()
 
+    // ── Runtime self-healing ─────────────────────────────────────────────────
+    val runtimeRecoveries = AtomicLong()
+
     // ── PacketReader throughput ───────────────────────────────────────────────
     val packetReaderTotal = AtomicLong()
     private var snapshotPkts   = 0L
