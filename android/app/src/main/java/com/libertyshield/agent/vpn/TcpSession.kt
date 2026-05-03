@@ -536,7 +536,8 @@ class TcpSession(
                             val buf = bufs[i]!!
                             val pw = PacketWrite(buf, chunkLens[i], fromPool = true, priority = WritePriority.DATA)
                             if (tunWriteDataQueue.trySend(pw).isSuccess) {
-                                VpnStats.tunWriteDataDepth.incrementAndGet()
+                                val depth = VpnStats.tunWriteDataDepth.incrementAndGet()
+                                if (depth > VpnStats.tunWriteDataMaxDepth.get()) VpnStats.tunWriteDataMaxDepth.set(depth)
                                 bufs[i] = null  // ownership transferred — skip in finally
                             } else {
                                 VpnStats.tunWriteDataDrops.incrementAndGet()
@@ -564,12 +565,17 @@ class TcpSession(
     }
 
     // ── Point 8: packet written to TUN ────────────────────────────────────────
-    // Sends control packets (SYN-ACK, ACK, RST, FIN-ACK) via the high-priority control queue.
+    // Sends control packets (SYN-ACK, ACK, RST, FIN-ACK) via the UNLIMITED control queue.
+    // Drop only on closed channel (VPN shutdown); never dropped due to capacity.
     private fun send(pkt: ByteArray, desc: String = "?") {
         if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
         val pw = PacketWrite(pkt, pkt.size, priority = WritePriority.CONTROL)
-        if (tunWriteControlQueue.trySend(pw).isSuccess) VpnStats.tunWriteControlDepth.incrementAndGet()
-        else VpnStats.tunWriteControlDrops.incrementAndGet()
+        if (tunWriteControlQueue.trySend(pw).isSuccess) {
+            val depth = VpnStats.tunWriteControlDepth.incrementAndGet()
+            if (depth > VpnStats.tunWriteControlMaxDepth.get()) VpnStats.tunWriteControlMaxDepth.set(depth)
+        } else {
+            VpnStats.tunWriteControlDrops.incrementAndGet()
+        }
     }
 
     private fun teardown() {

@@ -40,11 +40,10 @@ class PacketForwarder(
     // cap, a burst of QUIC/UDP traffic fills the 64-thread IO pool and starves TCP serverJobs.
     private val udpSemaphore  = Semaphore(MAX_UDP_CONCURRENT)
 
-    // Two-tier TUN write queues.  Control (SYN-ACK, ACK, RST, FIN, UDP) has a dedicated
-    // 512-slot queue; data (server-response segments) gets 2 048 slots.  The writer loop
-    // drains all pending control packets before taking each data packet so control latency
-    // is never gated behind a large data burst.
-    private val tunWriteControlQueue = Channel<PacketWrite>(capacity = TUN_CONTROL_QUEUE_CAPACITY)
+    // Two-tier TUN write queues.  Control (SYN-ACK, ACK, RST, FIN, UDP) is UNLIMITED so
+    // handshake and DNS packets are never dropped under load — dropping control is fatal.
+    // Data (server-response segments) is bounded at 2 048 to apply backpressure.
+    private val tunWriteControlQueue = Channel<PacketWrite>(capacity = Channel.UNLIMITED)
     private val tunWriteDataQueue    = Channel<PacketWrite>(capacity = TUN_DATA_QUEUE_CAPACITY)
 
     init {
@@ -163,12 +162,18 @@ class PacketForwarder(
         }
     }
 
-    // All non-data TUN writes (UDP, RST, session-cap reject) go through the control queue
-    // so they are never head-of-line blocked behind a burst of TCP data segments.
+    // All non-data TUN writes (UDP, RST, session-cap reject) go through the UNLIMITED control
+    // queue so they are never capacity-dropped.  A failure here means the channel was closed
+    // (VPN shutdown in progress) — log and count it, but do not crash.
     private fun sendControl(pkt: ByteArray) {
         val pw = PacketWrite(pkt, pkt.size, priority = WritePriority.CONTROL)
-        if (tunWriteControlQueue.trySend(pw).isSuccess) VpnStats.tunWriteControlDepth.incrementAndGet()
-        else VpnStats.tunWriteControlDrops.incrementAndGet()
+        if (tunWriteControlQueue.trySend(pw).isSuccess) {
+            val depth = VpnStats.tunWriteControlDepth.incrementAndGet()
+            if (depth > VpnStats.tunWriteControlMaxDepth.get()) VpnStats.tunWriteControlMaxDepth.set(depth)
+        } else {
+            VpnStats.tunWriteControlDrops.incrementAndGet()
+            Log.w(TAG, "CONTROL packet dropped — TUN control queue closed (shutdown in progress)")
+        }
     }
 
     private suspend fun forwardUdp(buf: ByteArray, len: Int, packet: ParsedPacket) {
@@ -367,8 +372,7 @@ class PacketForwarder(
         private const val QUIC_PORT                  = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
         private const val MAX_UDP_PAYLOAD            = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
         private const val MAX_UDP_CONCURRENT         = 32      // cap blocking IO threads for UDP; excess packets dropped
-        private const val TUN_CONTROL_QUEUE_CAPACITY = 512     // SYN-ACK, ACK, RST, FIN, UDP responses
-        private const val TUN_DATA_QUEUE_CAPACITY    = 2_048   // TCP server-response data segments
+        private const val TUN_DATA_QUEUE_CAPACITY    = 2_048   // TCP server-response data segments (bounded — backpressure)
         private const val REAPER_INITIAL_DELAY_MS    = 5_000L  // first prune after 5 s so sessions have time to establish
         private const val REAPER_INTERVAL_MS         = 5_000L  // prune interval
     }

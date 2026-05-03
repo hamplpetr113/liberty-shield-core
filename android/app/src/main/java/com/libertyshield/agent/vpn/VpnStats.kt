@@ -79,10 +79,12 @@ object VpnStats {
     val runtimeRecoveries = AtomicLong()
 
     // ── TUN write queues (priority split: control + data) ─────────────────────
-    val tunWriteControlDepth = AtomicInteger(0)
-    val tunWriteDataDepth    = AtomicInteger(0)
-    val tunWriteControlDrops = AtomicLong()
-    val tunWriteDataDrops    = AtomicLong()
+    val tunWriteControlDepth    = AtomicInteger(0)
+    val tunWriteControlMaxDepth = AtomicInteger(0)  // high-water mark for control queue depth
+    val tunWriteDataDepth       = AtomicInteger(0)
+    val tunWriteDataMaxDepth    = AtomicInteger(0)  // high-water mark for data queue depth
+    val tunWriteControlDrops    = AtomicLong()      // non-zero only on VPN shutdown
+    val tunWriteDataDrops       = AtomicLong()      // data backpressure drops
 
     // ── TCP session reaper ─────────────────────────────────────────────────────
     val tcpSessionsExpired            = AtomicLong()
@@ -137,7 +139,9 @@ object VpnStats {
         append(" tcpExpIdle=").append(tcpSessionsExpiredIdle.get())
         append(" tcpExpLife=").append(tcpSessionsExpiredLifetime.get())
         append(" tunCtrlDepth=").append(tunWriteControlDepth.get())
+        append(" tunCtrlMaxD=").append(tunWriteControlMaxDepth.get())
         append(" tunDataDepth=").append(tunWriteDataDepth.get())
+        append(" tunDataMaxD=").append(tunWriteDataMaxDepth.get())
         append(" tunCtrlDrops=").append(tunWriteControlDrops.get())
         append(" tunDataDrops=").append(tunWriteDataDrops.get())
         append(" gwOk=").append(gwPostOk.get())

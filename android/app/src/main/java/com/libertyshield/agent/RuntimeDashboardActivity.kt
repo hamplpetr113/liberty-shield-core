@@ -51,10 +51,12 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statTcpFirstByteMaxMs:    TextView
     private lateinit var statTcpNoFirstByte:       TextView
     private lateinit var statTcpConnectFailures:     TextView
-    private lateinit var statTunWriteControlDepth:  TextView
-    private lateinit var statTunWriteDataDepth:     TextView
-    private lateinit var statTunWriteControlDrops:  TextView
-    private lateinit var statTunWriteDataDrops:     TextView
+    private lateinit var statTunWriteControlDepth:    TextView
+    private lateinit var statTunWriteControlMaxDepth: TextView
+    private lateinit var statTunWriteDataDepth:       TextView
+    private lateinit var statTunWriteDataMaxDepth:    TextView
+    private lateinit var statTunWriteControlDrops:    TextView
+    private lateinit var statTunWriteDataDrops:       TextView
     private lateinit var statTcpExpired:            TextView
     private lateinit var statTcpExpiredNoFirstByte: TextView
     private lateinit var statTcpExpiredIdle:        TextView
@@ -130,11 +132,13 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteAvgMs    = findViewById(R.id.stat_tcp_first_byte_avg_ms)
         statTcpFirstByteMaxMs    = findViewById(R.id.stat_tcp_first_byte_max_ms)
         statTcpNoFirstByte       = findViewById(R.id.stat_tcp_no_first_byte)
-        statTcpConnectFailures     = findViewById(R.id.stat_tcp_connect_failures)
-        statTunWriteControlDepth  = findViewById(R.id.stat_tun_write_control_depth)
-        statTunWriteDataDepth     = findViewById(R.id.stat_tun_write_data_depth)
-        statTunWriteControlDrops  = findViewById(R.id.stat_tun_write_control_drops)
-        statTunWriteDataDrops     = findViewById(R.id.stat_tun_write_data_drops)
+        statTcpConnectFailures      = findViewById(R.id.stat_tcp_connect_failures)
+        statTunWriteControlDepth   = findViewById(R.id.stat_tun_write_control_depth)
+        statTunWriteControlMaxDepth= findViewById(R.id.stat_tun_write_control_max_depth)
+        statTunWriteDataDepth      = findViewById(R.id.stat_tun_write_data_depth)
+        statTunWriteDataMaxDepth   = findViewById(R.id.stat_tun_write_data_max_depth)
+        statTunWriteControlDrops   = findViewById(R.id.stat_tun_write_control_drops)
+        statTunWriteDataDrops      = findViewById(R.id.stat_tun_write_data_drops)
         statTcpExpired            = findViewById(R.id.stat_tcp_expired)
         statTcpExpiredNoFirstByte = findViewById(R.id.stat_tcp_expired_no_first_byte)
         statTcpExpiredIdle        = findViewById(R.id.stat_tcp_expired_idle)
@@ -209,10 +213,12 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteMaxMs.text    = "  tcpFirstByteMaxMs   :  ${VpnStats.tcpFirstByteMaxMs.get()} ms"
         statTcpNoFirstByte.text       = "  tcpNoFirstByte      :  ${VpnStats.tcpSessionsNoFirstByte.get()}"
         statTcpConnectFailures.text     = "  tcpConnectFailures   :  ${VpnStats.tcpConnectFailures.get()}"
-        statTunWriteControlDepth.text  = "  tunCtrlQueueDepth   :  ${VpnStats.tunWriteControlDepth.get()}"
-        statTunWriteDataDepth.text     = "  tunDataQueueDepth   :  ${VpnStats.tunWriteDataDepth.get()}"
-        statTunWriteControlDrops.text  = "  tunCtrlDrops        :  ${VpnStats.tunWriteControlDrops.get()}"
-        statTunWriteDataDrops.text     = "  tunDataDrops        :  ${VpnStats.tunWriteDataDrops.get()}"
+        statTunWriteControlDepth.text    = "  tunCtrlDepth        :  ${VpnStats.tunWriteControlDepth.get()}"
+        statTunWriteControlMaxDepth.text = "  tunCtrlMaxDepth     :  ${VpnStats.tunWriteControlMaxDepth.get()}"
+        statTunWriteDataDepth.text       = "  tunDataDepth        :  ${VpnStats.tunWriteDataDepth.get()}"
+        statTunWriteDataMaxDepth.text    = "  tunDataMaxDepth     :  ${VpnStats.tunWriteDataMaxDepth.get()}"
+        statTunWriteControlDrops.text    = "  tunCtrlDrops        :  ${VpnStats.tunWriteControlDrops.get()}"
+        statTunWriteDataDrops.text       = "  tunDataDrops        :  ${VpnStats.tunWriteDataDrops.get()}"
         statTcpExpired.text            = "  tcpExpired          :  ${VpnStats.tcpSessionsExpired.get()}"
         statTcpExpiredNoFirstByte.text = "  expNoFirstByte      :  ${VpnStats.tcpSessionsExpiredNoFirstByte.get()}"
         statTcpExpiredIdle.text        = "  expIdle             :  ${VpnStats.tcpSessionsExpiredIdle.get()}"
