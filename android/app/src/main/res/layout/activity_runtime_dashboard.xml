@@ -161,6 +161,30 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
+            <TextView android:id="@+id/stat_tcp_connect_avg_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_connect_max_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_first_byte_avg_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_first_byte_max_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_no_first_byte"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <TextView android:id="@+id/stat_tcp_connect_failures"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
             <!-- DNS -->
             <TextView
                 android:id="@+id/header_dns"

@@ -48,6 +48,8 @@ object VpnStats {
     val tcpFirstByteMaxMs      = AtomicLong()
     val tcpSessionsNoFirstByte = AtomicLong()
     val tcpConnectFailures     = AtomicLong()
+    /** New TCP sessions rejected because [TcpSessionTable.MAX_TCP_SESSIONS] was reached. */
+    val tcpSessionsRejectedCap = AtomicLong()
 
     /** CAS loop — safely records a new maximum without a lock. */
     fun updateMax(field: AtomicLong, value: Long) {
@@ -81,6 +83,8 @@ object VpnStats {
     // ── Gateway HTTP posts ────────────────────────────────────────────────────
     val gwPostOk   = AtomicLong()
     val gwPostFail = AtomicLong()
+    /** Telemetry events dropped because the outbound queue was full. */
+    val gwQueueRejected = AtomicLong()
 
     fun summary(): String = buildString {
         val dnsCount = dnsLatencyCount.get()
@@ -112,7 +116,9 @@ object VpnStats {
         append(" dnsHit=").append(dnsCacheHits.get())
         append(" dnsTout=").append(dnsTimeouts.get())
         append(" packetReaderRate=${pktRate}/s")
+        append(" tcpRejCap=").append(tcpSessionsRejectedCap.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
+        append(" gwQRej=").append(gwQueueRejected.get())
     }
 }

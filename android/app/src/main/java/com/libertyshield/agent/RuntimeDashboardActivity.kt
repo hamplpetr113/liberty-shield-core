@@ -110,11 +110,17 @@ class RuntimeDashboardActivity : Activity() {
         statVpnReaderRestarts = findViewById(R.id.stat_vpn_reader_restarts)
         statVpnUptime         = findViewById(R.id.stat_vpn_uptime)
 
-        statTcpActive          = findViewById(R.id.stat_tcp_active)
-        statTcpCreated         = findViewById(R.id.stat_tcp_created)
-        statTcpClosed          = findViewById(R.id.stat_tcp_closed)
-        statTcpQueueDepth      = findViewById(R.id.stat_tcp_queue_depth)
-        statTcpHighQueueEvents = findViewById(R.id.stat_tcp_high_queue_events)
+        statTcpActive            = findViewById(R.id.stat_tcp_active)
+        statTcpCreated           = findViewById(R.id.stat_tcp_created)
+        statTcpClosed            = findViewById(R.id.stat_tcp_closed)
+        statTcpQueueDepth        = findViewById(R.id.stat_tcp_queue_depth)
+        statTcpHighQueueEvents   = findViewById(R.id.stat_tcp_high_queue_events)
+        statTcpConnectAvgMs      = findViewById(R.id.stat_tcp_connect_avg_ms)
+        statTcpConnectMaxMs      = findViewById(R.id.stat_tcp_connect_max_ms)
+        statTcpFirstByteAvgMs    = findViewById(R.id.stat_tcp_first_byte_avg_ms)
+        statTcpFirstByteMaxMs    = findViewById(R.id.stat_tcp_first_byte_max_ms)
+        statTcpNoFirstByte       = findViewById(R.id.stat_tcp_no_first_byte)
+        statTcpConnectFailures   = findViewById(R.id.stat_tcp_connect_failures)
 
         statDnsCacheHits  = findViewById(R.id.stat_dns_cache_hits)
         statDnsTimeouts   = findViewById(R.id.stat_dns_timeouts)
@@ -168,11 +174,22 @@ class RuntimeDashboardActivity : Activity() {
         val dnsCount = VpnStats.dnsLatencyCount.get()
         val dnsAvg   = if (dnsCount > 0) "${VpnStats.dnsTotalLatencyMs.get() / dnsCount} ms" else "n/a"
 
-        statTcpActive.text          = "  activeTcpSessions   :  ${VpnStats.tcpSessionsActive.get()}"
-        statTcpCreated.text         = "  tcpCreated          :  ${VpnStats.tcpSessionsCreated.get()}"
-        statTcpClosed.text          = "  tcpClosed           :  ${VpnStats.tcpSessionsClosed.get()}"
-        statTcpQueueDepth.text      = "  tcpQueueMaxDepth    :  ${VpnStats.tcpQueueMaxDepth.get()}"
-        statTcpHighQueueEvents.text = "  tcpHighQueueEvents  :  ${VpnStats.tcpHighQueueEvents.get()}"
+        val connCount = VpnStats.tcpConnectCount.get()
+        val connAvg   = if (connCount > 0) "${VpnStats.tcpConnectTotalMs.get() / connCount} ms" else "n/a"
+        val fbCount   = VpnStats.tcpFirstByteCount.get()
+        val fbAvg     = if (fbCount > 0) "${VpnStats.tcpFirstByteTotalMs.get() / fbCount} ms" else "n/a"
+
+        statTcpActive.text            = "  activeTcpSessions   :  ${VpnStats.tcpSessionsActive.get()}"
+        statTcpCreated.text           = "  tcpCreated          :  ${VpnStats.tcpSessionsCreated.get()}"
+        statTcpClosed.text            = "  tcpClosed           :  ${VpnStats.tcpSessionsClosed.get()}"
+        statTcpQueueDepth.text        = "  tcpQueueMaxDepth    :  ${VpnStats.tcpQueueMaxDepth.get()}"
+        statTcpHighQueueEvents.text   = "  tcpHighQueueEvents  :  ${VpnStats.tcpHighQueueEvents.get()}"
+        statTcpConnectAvgMs.text      = "  tcpConnectAvgMs     :  $connAvg"
+        statTcpConnectMaxMs.text      = "  tcpConnectMaxMs     :  ${VpnStats.tcpConnectMaxMs.get()} ms"
+        statTcpFirstByteAvgMs.text    = "  tcpFirstByteAvgMs   :  $fbAvg"
+        statTcpFirstByteMaxMs.text    = "  tcpFirstByteMaxMs   :  ${VpnStats.tcpFirstByteMaxMs.get()} ms"
+        statTcpNoFirstByte.text       = "  tcpNoFirstByte      :  ${VpnStats.tcpSessionsNoFirstByte.get()}"
+        statTcpConnectFailures.text   = "  tcpConnectFailures  :  ${VpnStats.tcpConnectFailures.get()}"
 
         // DNS
         statDnsCacheHits.text  = "  dnsCacheHits        :  ${VpnStats.dnsCacheHits.get()}"
