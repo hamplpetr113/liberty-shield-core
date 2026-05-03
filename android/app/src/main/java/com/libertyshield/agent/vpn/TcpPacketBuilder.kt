@@ -356,4 +356,105 @@ object TcpPacketBuilder {
             buf[offset + i] = (octet.toInt() and 0xFF).toByte()
         }
     }
+
+    // ── Zero-allocation data builder (pool-buffer hot path) ───────────────────
+
+    /**
+     * Zero-allocation variant of buildData.
+     *
+     * Writes the complete IPv4 + TCP + payload packet directly into [out] (a
+     * pool-borrowed buffer) and returns the total byte count.  Callers must
+     * pass the returned length to tunOut.write(out, 0, len).
+     *
+     * IPs are passed as packed 32-bit integers (pre-parsed once at session
+     * construction) so no String.split() occurs inside this call.
+     */
+    fun buildDataInto(
+        out: ByteArray,
+        srcIp: Int,
+        dstIp: Int,
+        srcPort: Int,
+        dstPort: Int,
+        seq: Long,
+        ack: Long,
+        payload: ByteArray,
+        payloadOffset: Int,
+        payloadLen: Int,
+    ): Int {
+        val tcpLen   = TCP_HEADER_LEN + payloadLen
+        val totalLen = IP_HEADER_LEN  + tcpLen
+
+        // ── IPv4 header ────────────────────────────────────────────────────────
+        out[0]  = 0x45.toByte()             // version=4, IHL=5
+        out[1]  = 0                         // DSCP/ECN
+        out[2]  = (totalLen shr 8).toByte()
+        out[3]  = totalLen.toByte()
+        out[4]  = 0; out[5] = 0             // identification
+        out[6]  = 0x40.toByte(); out[7] = 0 // DF=1, no fragment
+        out[8]  = 64                         // TTL
+        out[9]  = 6                          // protocol: TCP
+        out[10] = 0; out[11] = 0            // checksum placeholder
+        writeIpInt(out, 12, srcIp)
+        writeIpInt(out, 16, dstIp)
+        val ipCk = ipv4Checksum(out)
+        out[10] = (ipCk shr 8).toByte()
+        out[11] = ipCk.toByte()
+
+        // ── TCP header ─────────────────────────────────────────────────────────
+        val b    = IP_HEADER_LEN
+        out[b + 0] = (srcPort shr 8).toByte(); out[b + 1] = srcPort.toByte()
+        out[b + 2] = (dstPort shr 8).toByte(); out[b + 3] = dstPort.toByte()
+        val seq32 = seq and 0xFFFF_FFFFL
+        out[b + 4] = (seq32 shr 24).toByte()
+        out[b + 5] = (seq32 shr 16).toByte()
+        out[b + 6] = (seq32 shr  8).toByte()
+        out[b + 7] = seq32.toByte()
+        val ack32 = ack and 0xFFFF_FFFFL
+        out[b +  8] = (ack32 shr 24).toByte()
+        out[b +  9] = (ack32 shr 16).toByte()
+        out[b + 10] = (ack32 shr  8).toByte()
+        out[b + 11] = ack32.toByte()
+        out[b + 12] = 0x50.toByte()          // data offset=5, no options
+        out[b + 13] = (FLAG_PSH or FLAG_ACK).toByte()
+        out[b + 14] = (WINDOW_SIZE shr 8).toByte()
+        out[b + 15] = WINDOW_SIZE.toByte()
+        out[b + 16] = 0; out[b + 17] = 0    // checksum placeholder
+        out[b + 18] = 0; out[b + 19] = 0    // urgent pointer
+
+        // ── Payload ────────────────────────────────────────────────────────────
+        payload.copyInto(out, b + TCP_HEADER_LEN, payloadOffset, payloadOffset + payloadLen)
+
+        // ── TCP checksum (after headers + payload are in place) ────────────────
+        val tcpCk = tcpChecksumInt(out, srcIp, dstIp, tcpLen)
+        out[b + 16] = (tcpCk shr 8).toByte()
+        out[b + 17] = tcpCk.toByte()
+
+        return totalLen
+    }
+
+    /** Writes a packed 32-bit IP int into buf at offset as four raw bytes. */
+    private fun writeIpInt(buf: ByteArray, offset: Int, ip: Int) {
+        buf[offset]     = (ip ushr 24).toByte()
+        buf[offset + 1] = (ip ushr 16).toByte()
+        buf[offset + 2] = (ip ushr  8).toByte()
+        buf[offset + 3] = ip.toByte()
+    }
+
+    /** Sums a packed 32-bit IP int as two unsigned 16-bit big-endian words (no allocations). */
+    private fun ipWordSumInt(ip: Int): Long =
+        ((ip ushr 16).toLong() and 0xFFFFL) + (ip.toLong() and 0xFFFFL)
+
+    /** TCP checksum using pre-parsed integer IPs — no String.split() in the hot path. */
+    private fun tcpChecksumInt(out: ByteArray, srcIp: Int, dstIp: Int, tcpLen: Int): Int {
+        var sum = ipWordSumInt(srcIp) + ipWordSumInt(dstIp) + 6L + tcpLen.toLong()
+        val start = IP_HEADER_LEN
+        val end   = start + tcpLen
+        var i     = start
+        while (i < end - 1) {
+            sum += ((out[i].toInt() and 0xFF) shl 8 or (out[i + 1].toInt() and 0xFF)).toLong()
+            i += 2
+        }
+        if (i < end) sum += (out[i].toInt() and 0xFF).toLong() shl 8
+        return foldAndInvert(sum)
+    }
 }

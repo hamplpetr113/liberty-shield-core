@@ -2,6 +2,7 @@ package com.libertyshield.agent.vpn
 
 import android.net.VpnService
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -31,12 +32,21 @@ class TcpSession(
     private enum class State { CLOSED, SYN_RECEIVED, ESTABLISHED, FIN_WAIT, CLOSED_FINAL }
 
     private val sessionMutex = Mutex()
-    private var state: State = State.CLOSED
+    @Volatile private var state: State = State.CLOSED
     private var server: Socket? = null
     private var serverOut: OutputStream? = null
     private var serverJob: Job? = null
     private var relaySeq: Long = 0L
     private var relayAck: Long = 0L
+
+    // Pre-parsed IP ints: avoid String.split() allocations in the packet-build hot path.
+    // Parsed once at session construction; srcIp/dstIp strings remain for logging.
+    private val srcIpInt: Int = ipToInt(srcIp)
+    private val dstIpInt: Int = ipToInt(dstIp)
+
+    // Latency diagnostics — written by onSyn(), read by startServerReader().
+    // @Volatile: onSyn() runs in queueJob, startServerReader() runs in serverJob.
+    @Volatile private var connectDoneMs: Long = 0L
 
     // Per-session FIFO queue. PacketReader enqueues instantly (never blocks).
     // A dedicated coroutine drains it, so each session is independent — a slow
@@ -46,6 +56,7 @@ class TcpSession(
     private val inQueue    = Channel<ByteArray>(capacity = 256)
     private var queueJob: Job? = null
     private val queueDepth = AtomicInteger(0)   // tracks enqueued-but-not-yet-handled count
+    @Volatile private var highQueueLogged = false
 
     init {
         queueJob = scope.launch {
@@ -69,6 +80,11 @@ class TcpSession(
             val depth = queueDepth.incrementAndGet()
             // Racy compare-and-set is intentional — both threads write valid peaks, last writer wins
             if (depth > VpnStats.tcpQueueMaxDepth.get()) VpnStats.tcpQueueMaxDepth.set(depth)
+            if (depth > HIGH_QUEUE_THRESHOLD && !highQueueLogged) {
+                highQueueLogged = true
+                Log.w(TAG, "High TCP queue $srcIp:$srcPort→$dstIp:$dstPort depth=$depth")
+                VpnStats.tcpHighQueueEvents.incrementAndGet()
+            }
         }
     }
 
@@ -241,6 +257,10 @@ class TcpSession(
                 val t0 = System.currentTimeMillis()
                 s.connect(InetSocketAddress(dstIp, dstPort), CONNECT_TIMEOUT_MS)
                 val elapsed = System.currentTimeMillis() - t0
+                connectDoneMs = t0 + elapsed
+                VpnStats.tcpConnectCount.incrementAndGet()
+                VpnStats.tcpConnectTotalMs.addAndGet(elapsed)
+                VpnStats.updateMax(VpnStats.tcpConnectMaxMs, elapsed)
                 if (elapsed > CONNECT_WARN_MS) {
                     Log.w(TAG, "TCP slow connect ${elapsed}ms $dstIp:$dstPort")
                     VpnStats.tcpSlowConnects.incrementAndGet()
@@ -249,6 +269,7 @@ class TcpSession(
             }
         } catch (e: Exception) {
             Log.w(TAG, "TCP connect failed $dstIp:$dstPort: ${e::class.java.simpleName}: ${e.message}")
+            VpnStats.tcpConnectFailures.incrementAndGet()
             null
         }
 
@@ -352,41 +373,86 @@ class TcpSession(
     private fun startServerReader() {
         val sock = server ?: return
         serverJob = scope.launch {
+            var firstByteReceived = false
             try {
-                val inp = sock.getInputStream()
+                val inp     = sock.getInputStream()
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
-                var n = 0
+                var n       = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
+                    if (!firstByteReceived && n > 0) {
+                        firstByteReceived = true
+                        val fbLatency = System.currentTimeMillis() - connectDoneMs
+                        VpnStats.tcpFirstByteCount.incrementAndGet()
+                        VpnStats.tcpFirstByteTotalMs.addAndGet(fbLatency)
+                        VpnStats.updateMax(VpnStats.tcpFirstByteMaxMs, fbLatency)
+                    }
                     // ── Point 6: bytes read from server socket ─────────────────
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
-                    // Split into MSS-sized chunks so every IP packet stays within the
-                    // TUN MTU (1500).  A single inp.read() can return up to READ_BUFFER_SIZE
-                    // bytes; building one oversized packet from that causes EMSGSIZE on the
-                    // tunOut.write() and silently tears down the session.
-                    var offset = 0
-                    while (offset < n) {
-                        val chunkLen = minOf(MSS, n - offset)
-                        sessionMutex.withLock {
-                            if (state == State.ESTABLISHED) {
-                                val seqBefore = relaySeq
-                                // Zero-copy: buildData reads directly from readBuf[offset..+chunkLen]
-                                // avoiding a ByteArray allocation per chunk (saves ~1 MB GC per MB transferred).
-                                val pkt = TcpPacketBuilder.buildData(
-                                    dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck,
-                                    readBuf, offset, chunkLen,
-                                )
-                                send(pkt, "PSH|ACK data=${chunkLen}B")
-                                relaySeq = mask32(relaySeq + chunkLen)
-                                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
-                                    Log.d(TAG, "[7] BUILD DATA ${chunkLen}B $srcIp:$srcPort→$dstIp:$dstPort " +
-                                        "seqBefore=$seqBefore seqAfter=$relaySeq relayAck=$relayAck")
-                                }
+                    // Split into MSS-sized chunks (MTU 1500 → MSS 1460).
+                    //
+                    // Three-phase mutex strategy:
+                    //   Phase 1 — one sessionMutex lock for the whole read: snapshot relayAck,
+                    //             record (seq, len) for each chunk, advance relaySeq. No allocs.
+                    //   Phase 2 — build IP/TCP packets outside every lock.
+                    //   Phase 3 — one writeMutex lock to batch-write all chunks to TUN.
+                    //
+                    // Previously: sessionMutex → writeMutex acquired per chunk (~90 times for a
+                    // 131 KB read), with packet allocation inside sessionMutex on every iteration.
+                    val numChunks = (n + MSS - 1) / MSS
+                    val seqSnaps  = LongArray(numChunks)
+                    val chunkLens = IntArray(numChunks)
+                    var ackSnap   = 0L
+                    var active    = false
+                    sessionMutex.withLock {
+                        if (state == State.ESTABLISHED) {
+                            active  = true
+                            ackSnap = relayAck
+                            var off = 0
+                            var i   = 0
+                            while (off < n) {
+                                val cl       = minOf(MSS, n - off)
+                                seqSnaps[i]  = relaySeq
+                                chunkLens[i] = cl
+                                relaySeq     = mask32(relaySeq + cl)
+                                off += cl
+                                i++
                             }
                         }
-                        offset += chunkLen
+                    }
+                    if (!active) continue
+
+                    // Phase 2: borrow pool buffers, build packets into them — zero per-packet allocation.
+                    // chunkLens[i] starts as payload length; after buildDataInto it holds total pkt length.
+                    val bufs = ArrayList<ByteArray>(numChunks)
+                    var off  = 0
+                    for (i in 0 until numChunks) {
+                        val payloadLen = chunkLens[i]
+                        val buf = PacketPool.acquire()
+                        bufs.add(buf)
+                        chunkLens[i] = TcpPacketBuilder.buildDataInto(
+                            buf, dstIpInt, srcIpInt, dstPort, srcPort,
+                            seqSnaps[i], ackSnap, readBuf, off, payloadLen,
+                        )
+                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                            Log.d(TAG, "[7] BUILD DATA ${payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
+                        }
+                        off += payloadLen
+                    }
+
+                    // Phase 3: one writeMutex acquisition for the entire batch
+                    try {
+                        writeMutex.withLock {
+                            for (i in 0 until numChunks) tunOut.write(bufs[i], 0, chunkLens[i])
+                            tunOut.flush()
+                        }
+                    } finally {
+                        for (buf in bufs) PacketPool.release(buf)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { }
+            if (!firstByteReceived && connectDoneMs > 0L) VpnStats.tcpSessionsNoFirstByte.incrementAndGet()
             // NonCancellable: if serverJob was cancelled externally, a plain suspend call
             // would throw CancellationException and skip teardown. Wrap so teardown always runs.
             withContext(NonCancellable) { sessionMutex.withLock { teardown() } }
@@ -422,8 +488,9 @@ class TcpSession(
         private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
         private const val CONNECT_TIMEOUT_MS  = 2_500
         private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
-        private const val READ_BUFFER_SIZE   = 32_768
-        private const val MSS                = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val READ_BUFFER_SIZE    = 131_072
+        private const val MSS                 = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val HIGH_QUEUE_THRESHOLD = 64    // warn and count when session queue exceeds this
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"
@@ -432,5 +499,12 @@ class TcpSession(
         // space, meaning those bytes were already forwarded. Used to detect client retransmits.
         private fun seq32Covered(nextSeq: Long, relayAck: Long): Boolean =
             ((relayAck - nextSeq) and 0xFFFF_FFFFL) < 0x8000_0000L
+
+        /** Parses "a.b.c.d" into a packed 32-bit int once at session construction. */
+        private fun ipToInt(ip: String): Int {
+            val p = ip.split(".")
+            return (p[0].toInt() shl 24) or (p[1].toInt() shl 16) or
+                   (p[2].toInt() shl  8) or  p[3].toInt()
+        }
     }
 }

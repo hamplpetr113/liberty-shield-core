@@ -57,7 +57,7 @@ class ShieldVpnService : VpnService() {
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
-            ACTION_STOP -> { stopVpn(); START_NOT_STICKY }
+            ACTION_STOP -> { recordStopReason("ACTION_STOP"); stopVpn(); START_NOT_STICKY }
             else        -> {
                 startVpn()
                 // If VPN failed to establish, don't let Android restart us into an infinite loop.
@@ -70,6 +70,7 @@ class ShieldVpnService : VpnService() {
 
     override fun onRevoke() {
         Log.i(TAG, "VPN permission revoked by system")
+        recordStopReason("SYSTEM_REVOKE")
         stopVpn()
         super.onRevoke()
     }
@@ -77,8 +78,24 @@ class ShieldVpnService : VpnService() {
     /** Safety net: system-initiated destroy must clean up even if ACTION_STOP was never sent. */
     override fun onDestroy() {
         Log.i(TAG, "onDestroy vpnState=$vpnState")
+        if (vpnState != VpnState.STOPPED && vpnState != VpnState.STOPPING) {
+            recordStopReason("ON_DESTROY state=$vpnState")
+        }
         stopVpn()
         super.onDestroy()
+    }
+
+    // ── Shutdown diagnostics ──────────────────────────────────────────────────
+
+    private fun recordStopReason(reason: String, error: Throwable? = null) {
+        VpnStats.vpnLastStopReason.set(reason)
+        VpnStats.vpnStopCount.incrementAndGet()
+        VpnStats.vpnLastStopTimestampMs.set(System.currentTimeMillis())
+        if (error != null) {
+            VpnStats.vpnLastExceptionClass.set(error.javaClass.simpleName)
+            VpnStats.vpnLastExceptionMessage.set(error.message ?: "")
+        }
+        Log.w("VPN_STOP", "reason=$reason state=$vpnState error=${error?.javaClass?.simpleName}: ${error?.message}", error)
     }
 
     // ── VPN start / stop ──────────────────────────────────────────────────────
@@ -117,20 +134,31 @@ class ShieldVpnService : VpnService() {
                 .establish()
                 ?: run {
                     Log.e(TAG, "establish() returned null — permission revoked or another VPN is active")
+                    recordStopReason("ESTABLISH_NULL")
                     transition(VpnState.FAILED)
                     stopSelf()
                     return
                 }
 
             Log.i(TAG, "step 4: TUN established fd=${tun!!.fd}, starting relay")
+            VpnStats.vpnEstablished.set(true)
+            VpnStats.tunFdValid.set(true)
+            VpnStats.vpnStartTimestampMs.set(System.currentTimeMillis())
             val tunFd = tun!!
             val fwd = PacketForwarder(this@ShieldVpnService, FileOutputStream(tunFd.fileDescriptor))
             forwarder = fwd
+            // Transition to RUNNING before launching the coroutine so the PacketReader's
+            // while-guard always sees RUNNING on first check. Launching first and transitioning
+            // after was a race: the IO thread could evaluate (vpnState == RUNNING) while the
+            // main thread had not yet called transition(), causing the relay to silently never
+            // start while the TUN was up — resulting in broken internet with counters stuck at 0.
+            transition(VpnState.RUNNING)
             scope.launch {
                 var restarts = 0
                 while (isActive && vpnState == VpnState.RUNNING) {
                     if (restarts > 0) Log.w(TAG, "PacketReader restarting (attempt $restarts of $MAX_READER_RESTARTS)")
                     try {
+                        VpnStats.packetReaderRunning.set(true)
                         PacketReader(
                             stream    = FileInputStream(tunFd.fileDescriptor),
                             forwarder = fwd,
@@ -138,13 +166,19 @@ class ShieldVpnService : VpnService() {
                             tracker   = ConnectionTracker(this@ShieldVpnService),
                             client    = client,
                         ).run()
+                        VpnStats.packetReaderRunning.set(false)
+                        recordStopReason("PACKET_READER_EOF")
                         Log.i(TAG, "PacketReader exited cleanly")
                         break  // clean exit (TUN closed or EOF) — do not restart
                     } catch (e: CancellationException) {
+                        VpnStats.packetReaderRunning.set(false)
                         throw e   // scope is cancelling — propagate, don't treat as a crash
                     } catch (e: Exception) {
+                        VpnStats.packetReaderRunning.set(false)
+                        recordStopReason("PACKET_READER_CRASH attempt=$restarts", e)
                         Log.e("VPN_CRASH", "Packet loop crashed", e)
                         restarts++
+                        VpnStats.packetReaderRestarts.set(restarts.toLong())
                         if (restarts > MAX_READER_RESTARTS || vpnState != VpnState.RUNNING) break
                         val backoff = minOf(RESTART_DELAY_MS * restarts, MAX_RESTART_DELAY_MS)
                         Log.w(TAG, "Restarting PacketReader in ${backoff}ms")
@@ -153,13 +187,14 @@ class ShieldVpnService : VpnService() {
                 }
                 if (vpnState == VpnState.RUNNING) {
                     Log.w(TAG, "PacketReader permanently exited while VPN running — stopping VPN")
+                    recordStopReason(if (restarts > MAX_READER_RESTARTS) "PACKET_READER_MAX_RESTARTS" else "PACKET_READER_PERMANENT_EXIT")
                     stopVpn()
                 }
             }
             startHeartbeat()
-            transition(VpnState.RUNNING)
         } catch (e: Exception) {
             Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
+            recordStopReason("START_EXCEPTION", e)
             transition(VpnState.FAILED)
             stopSelf()
         }
@@ -171,6 +206,10 @@ class ShieldVpnService : VpnService() {
             return
         }
         transition(VpnState.STOPPING)
+        VpnStats.vpnEstablished.set(false)
+        VpnStats.tunFdValid.set(false)
+        VpnStats.packetReaderRunning.set(false)
+        VpnStats.vpnStartTimestampMs.set(0L)
         // Close the TUN fd first so PacketReader.run()'s blocking stream.read() throws
         // IOException immediately and the coroutine exits before we cancel the scope.
         tun?.close()
