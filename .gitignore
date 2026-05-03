@@ -1,1 +1,10 @@
 /target
+
+# Android build artifacts
+android/.gradle/
+android/.idea/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
+*.aab

@@ -556,11 +556,15 @@ class TcpSession(
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) { }
-            if (!firstByteReceived && connectDoneMs > 0L) VpnStats.tcpSessionsNoFirstByte.incrementAndGet()
-            // NonCancellable: if serverJob was cancelled externally, a plain suspend call
-            // would throw CancellationException and skip teardown. Wrap so teardown always runs.
-            withContext(NonCancellable) { sessionMutex.withLock { teardown() } }
+            } catch (_: Exception) {
+            } finally {
+                // finally guarantees teardown + stat update run on every exit path:
+                // normal EOF, socket IOException, CancellationException, and scope cancel.
+                if (!firstByteReceived && connectDoneMs > 0L) VpnStats.tcpSessionsNoFirstByte.incrementAndGet()
+                // NonCancellable: if serverJob was cancelled externally, a plain suspend call
+                // would throw CancellationException and skip teardown. Wrap so teardown always runs.
+                withContext(NonCancellable) { sessionMutex.withLock { teardown() } }
+            }
         }
     }
 

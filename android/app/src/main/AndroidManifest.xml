@@ -10,9 +10,6 @@
                      tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.BODY_SENSORS" />
-    <uses-permission android:name="android.permission.BIND_VPN_SERVICE"
-                     tools:ignore="ProtectedPermissions" />
 
     <application
         android:label="Liberty Shield Agent"
@@ -60,7 +57,7 @@
         <!-- TEST MODE: two-phone harness — not for production -->
         <activity
             android:name=".test.TestModeActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="[TEST] Liberty Shield" />
 
         <service
