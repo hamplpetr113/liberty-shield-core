@@ -189,13 +189,37 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
 
-            <TextView android:id="@+id/stat_tun_write_queue_depth"
+            <TextView android:id="@+id/stat_tun_write_control_depth"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
-            <TextView android:id="@+id/stat_tcp_tun_write_drops"
+            <TextView android:id="@+id/stat_tun_write_data_depth"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tun_write_control_drops"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <TextView android:id="@+id/stat_tun_write_data_drops"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <TextView android:id="@+id/stat_tcp_expired"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_expired_no_first_byte"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <TextView android:id="@+id/stat_tcp_expired_idle"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_expired_lifetime"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
 
             <!-- DNS -->
             <TextView

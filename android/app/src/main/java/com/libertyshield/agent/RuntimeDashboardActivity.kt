@@ -50,9 +50,15 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statTcpFirstByteAvgMs:    TextView
     private lateinit var statTcpFirstByteMaxMs:    TextView
     private lateinit var statTcpNoFirstByte:       TextView
-    private lateinit var statTcpConnectFailures:   TextView
-    private lateinit var statTunWriteQueueDepth:   TextView
-    private lateinit var statTcpTunWriteDrops:     TextView
+    private lateinit var statTcpConnectFailures:     TextView
+    private lateinit var statTunWriteControlDepth:  TextView
+    private lateinit var statTunWriteDataDepth:     TextView
+    private lateinit var statTunWriteControlDrops:  TextView
+    private lateinit var statTunWriteDataDrops:     TextView
+    private lateinit var statTcpExpired:            TextView
+    private lateinit var statTcpExpiredNoFirstByte: TextView
+    private lateinit var statTcpExpiredIdle:        TextView
+    private lateinit var statTcpExpiredLifetime:    TextView
 
     // DNS
     private lateinit var statDnsCacheHits:       TextView
@@ -124,9 +130,15 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteAvgMs    = findViewById(R.id.stat_tcp_first_byte_avg_ms)
         statTcpFirstByteMaxMs    = findViewById(R.id.stat_tcp_first_byte_max_ms)
         statTcpNoFirstByte       = findViewById(R.id.stat_tcp_no_first_byte)
-        statTcpConnectFailures   = findViewById(R.id.stat_tcp_connect_failures)
-        statTunWriteQueueDepth   = findViewById(R.id.stat_tun_write_queue_depth)
-        statTcpTunWriteDrops     = findViewById(R.id.stat_tcp_tun_write_drops)
+        statTcpConnectFailures     = findViewById(R.id.stat_tcp_connect_failures)
+        statTunWriteControlDepth  = findViewById(R.id.stat_tun_write_control_depth)
+        statTunWriteDataDepth     = findViewById(R.id.stat_tun_write_data_depth)
+        statTunWriteControlDrops  = findViewById(R.id.stat_tun_write_control_drops)
+        statTunWriteDataDrops     = findViewById(R.id.stat_tun_write_data_drops)
+        statTcpExpired            = findViewById(R.id.stat_tcp_expired)
+        statTcpExpiredNoFirstByte = findViewById(R.id.stat_tcp_expired_no_first_byte)
+        statTcpExpiredIdle        = findViewById(R.id.stat_tcp_expired_idle)
+        statTcpExpiredLifetime    = findViewById(R.id.stat_tcp_expired_lifetime)
 
         statDnsCacheHits  = findViewById(R.id.stat_dns_cache_hits)
         statDnsTimeouts   = findViewById(R.id.stat_dns_timeouts)
@@ -196,9 +208,15 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteAvgMs.text    = "  tcpFirstByteAvgMs   :  $fbAvg"
         statTcpFirstByteMaxMs.text    = "  tcpFirstByteMaxMs   :  ${VpnStats.tcpFirstByteMaxMs.get()} ms"
         statTcpNoFirstByte.text       = "  tcpNoFirstByte      :  ${VpnStats.tcpSessionsNoFirstByte.get()}"
-        statTcpConnectFailures.text   = "  tcpConnectFailures  :  ${VpnStats.tcpConnectFailures.get()}"
-        statTunWriteQueueDepth.text   = "  tunWriteQueueDepth  :  ${VpnStats.tunWriteQueueDepth.get()}"
-        statTcpTunWriteDrops.text     = "  tcpTunWriteDrops    :  ${VpnStats.tcpTunWriteDrops.get()}"
+        statTcpConnectFailures.text     = "  tcpConnectFailures   :  ${VpnStats.tcpConnectFailures.get()}"
+        statTunWriteControlDepth.text  = "  tunCtrlQueueDepth   :  ${VpnStats.tunWriteControlDepth.get()}"
+        statTunWriteDataDepth.text     = "  tunDataQueueDepth   :  ${VpnStats.tunWriteDataDepth.get()}"
+        statTunWriteControlDrops.text  = "  tunCtrlDrops        :  ${VpnStats.tunWriteControlDrops.get()}"
+        statTunWriteDataDrops.text     = "  tunDataDrops        :  ${VpnStats.tunWriteDataDrops.get()}"
+        statTcpExpired.text            = "  tcpExpired          :  ${VpnStats.tcpSessionsExpired.get()}"
+        statTcpExpiredNoFirstByte.text = "  expNoFirstByte      :  ${VpnStats.tcpSessionsExpiredNoFirstByte.get()}"
+        statTcpExpiredIdle.text        = "  expIdle             :  ${VpnStats.tcpSessionsExpiredIdle.get()}"
+        statTcpExpiredLifetime.text    = "  expLifetime         :  ${VpnStats.tcpSessionsExpiredLifetime.get()}"
 
         // DNS
         statDnsCacheHits.text  = "  dnsCacheHits        :  ${VpnStats.dnsCacheHits.get()}"

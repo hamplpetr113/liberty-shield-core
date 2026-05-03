@@ -34,6 +34,20 @@ class TcpSessionTable {
         sessions.clear()
     }
 
+    @Synchronized
+    fun pruneExpired() {
+        val nowMs = System.currentTimeMillis()
+        val toExpire = mutableListOf<Triple<String, TcpSession, String>>()
+        for ((key, session) in sessions) {
+            val reason = session.expiryReason(nowMs) ?: continue
+            toExpire.add(Triple(key, session, reason))
+        }
+        for ((key, session, reason) in toExpire) {
+            sessions.remove(key)
+            session.closeExpired(reason)  // calls teardown → onClose → remove (reentrant, no-op)
+        }
+    }
+
     companion object {
         private const val TAG = "TcpSessionTable"
         const val MAX_TCP_SESSIONS = 512

@@ -78,9 +78,17 @@ object VpnStats {
     // ── Runtime self-healing ─────────────────────────────────────────────────
     val runtimeRecoveries = AtomicLong()
 
-    // ── TUN write queue ───────────────────────────────────────────────────────
-    val tcpTunWriteDrops   = AtomicLong()
-    val tunWriteQueueDepth = AtomicInteger(0)
+    // ── TUN write queues (priority split: control + data) ─────────────────────
+    val tunWriteControlDepth = AtomicInteger(0)
+    val tunWriteDataDepth    = AtomicInteger(0)
+    val tunWriteControlDrops = AtomicLong()
+    val tunWriteDataDrops    = AtomicLong()
+
+    // ── TCP session reaper ─────────────────────────────────────────────────────
+    val tcpSessionsExpired            = AtomicLong()
+    val tcpSessionsExpiredNoFirstByte = AtomicLong()
+    val tcpSessionsExpiredIdle        = AtomicLong()
+    val tcpSessionsExpiredLifetime    = AtomicLong()
 
     // ── PacketReader throughput ───────────────────────────────────────────────
     val packetReaderTotal = AtomicLong()
@@ -124,8 +132,14 @@ object VpnStats {
         append(" dnsTout=").append(dnsTimeouts.get())
         append(" packetReaderRate=${pktRate}/s")
         append(" tcpRejCap=").append(tcpSessionsRejectedCap.get())
-        append(" tunWQDepth=").append(tunWriteQueueDepth.get())
-        append(" tunWDrops=").append(tcpTunWriteDrops.get())
+        append(" tcpExpired=").append(tcpSessionsExpired.get())
+        append(" tcpExpNoFB=").append(tcpSessionsExpiredNoFirstByte.get())
+        append(" tcpExpIdle=").append(tcpSessionsExpiredIdle.get())
+        append(" tcpExpLife=").append(tcpSessionsExpiredLifetime.get())
+        append(" tunCtrlDepth=").append(tunWriteControlDepth.get())
+        append(" tunDataDepth=").append(tunWriteDataDepth.get())
+        append(" tunCtrlDrops=").append(tunWriteControlDrops.get())
+        append(" tunDataDrops=").append(tunWriteDataDrops.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
         append(" gwQRej=").append(gwQueueRejected.get())

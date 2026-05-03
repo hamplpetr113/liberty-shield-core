@@ -25,7 +25,8 @@ class TcpSession(
     private val dstIp: String,
     private val dstPort: Int,
     private val vpnService: VpnService,
-    private val tunWriteQueue: SendChannel<PacketWrite>,
+    private val tunWriteControlQueue: SendChannel<PacketWrite>,
+    private val tunWriteDataQueue: SendChannel<PacketWrite>,
     private val scope: CoroutineScope,
     private val onClose: () -> Unit = {},
 ) {
@@ -47,6 +48,11 @@ class TcpSession(
     // Latency diagnostics — written by onSyn(), read by startServerReader().
     // @Volatile: onSyn() runs in queueJob, startServerReader() runs in serverJob.
     @Volatile private var connectDoneMs: Long = 0L
+
+    // Session reaper fields — written by queueJob/serverJob, read by reaper coroutine.
+    val createdAtMs: Long = System.currentTimeMillis()
+    @Volatile var lastActivityMs: Long = createdAtMs
+    @Volatile var firstByteSeen: Boolean = false
 
     // Per-session FIFO queue. PacketReader enqueues instantly (never blocks).
     // A dedicated coroutine drains it, so each session is independent — a slow
@@ -78,6 +84,7 @@ class TcpSession(
                 teardown()
             }
         } else {
+            lastActivityMs = System.currentTimeMillis()
             val depth = queueDepth.incrementAndGet()
             // Racy compare-and-set is intentional — both threads write valid peaks, last writer wins
             if (depth > VpnStats.tcpQueueMaxDepth.get()) VpnStats.tcpQueueMaxDepth.set(depth)
@@ -87,6 +94,39 @@ class TcpSession(
                 VpnStats.tcpHighQueueEvents.incrementAndGet()
             }
         }
+    }
+
+    // Returns null (not expired) or the expiry reason string.
+    // Called by the reaper from a different thread — all fields read here are @Volatile.
+    fun expiryReason(nowMs: Long): String? {
+        if (state == State.CLOSED_FINAL) return "closed"
+        if (!firstByteSeen && nowMs - createdAtMs >= NO_FIRST_BYTE_TIMEOUT_MS) return "no_first_byte"
+        if (nowMs - lastActivityMs >= IDLE_SESSION_TIMEOUT_MS) return "idle"
+        if (nowMs - createdAtMs >= MAX_SESSION_LIFETIME_MS) return "lifetime"
+        return null
+    }
+
+    fun isExpired(nowMs: Long): Boolean = expiryReason(nowMs) != null
+
+    // Called by TcpSessionTable.pruneExpired() on the reaper thread.
+    // Increments per-reason stats, sends a best-effort RST, then tears down.
+    fun closeExpired(reason: String) {
+        when (reason) {
+            "no_first_byte" -> {
+                VpnStats.tcpSessionsExpired.incrementAndGet()
+                VpnStats.tcpSessionsExpiredNoFirstByte.incrementAndGet()
+            }
+            "idle" -> {
+                VpnStats.tcpSessionsExpired.incrementAndGet()
+                VpnStats.tcpSessionsExpiredIdle.incrementAndGet()
+            }
+            "lifetime" -> {
+                VpnStats.tcpSessionsExpired.incrementAndGet()
+                VpnStats.tcpSessionsExpiredLifetime.incrementAndGet()
+            }
+        }
+        send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, 0L), "RST expired=$reason")
+        teardown()
     }
 
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
@@ -408,6 +448,7 @@ class TcpSession(
             if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: writing ${data.size}B to $dstIp:$dstPort")
             out.write(data)
             out.flush()
+            lastActivityMs = System.currentTimeMillis()
             if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
         } catch (e: Exception) {
             Log.w(TAG, "[5] forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
@@ -424,8 +465,10 @@ class TcpSession(
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n       = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
+                    lastActivityMs = System.currentTimeMillis()
                     if (!firstByteReceived && n > 0) {
                         firstByteReceived = true
+                        firstByteSeen = true
                         val fbLatency = System.currentTimeMillis() - connectDoneMs
                         VpnStats.tcpFirstByteCount.incrementAndGet()
                         VpnStats.tcpFirstByteTotalMs.addAndGet(fbLatency)
@@ -439,8 +482,8 @@ class TcpSession(
                     //   Phase 1 — one sessionMutex lock for the whole read: snapshot relayAck,
                     //             record (seq, len) for each chunk, advance relaySeq. No allocs.
                     //   Phase 2 — build IP/TCP packets into pool buffers outside every lock.
-                    //   Phase 3 — trySend each chunk to tunWriteQueue (lock-free). Drain coroutine
-                    //             serialises TUN writes so parallel sessions never contend.
+                    //   Phase 3 — trySend each chunk to tunWriteDataQueue (lock-free). Data queue
+                    //             overflow triggers an RST and tears down the session (backpressure).
                     val numChunks = (n + MSS - 1) / MSS
                     val seqSnaps  = LongArray(numChunks)
                     val chunkLens = IntArray(numChunks)
@@ -468,6 +511,7 @@ class TcpSession(
                     // chunkLens[i] starts as payload length; after buildDataInto it holds total pkt length.
                     // Nullable array: Phase 3 nulls each slot on successful enqueue so the finally
                     // block only releases buffers whose ownership did NOT transfer to the drain coroutine.
+                    var backpressureTeardown = false
                     val bufs = arrayOfNulls<ByteArray>(numChunks)
                     try {
                         var off = 0
@@ -485,19 +529,28 @@ class TcpSession(
                             off += payloadLen
                         }
 
-                        // Phase 3: enqueue all chunks; drain coroutine writes and releases pool buffers.
+                        // Phase 3: enqueue chunks to the data queue.  On overflow, send RST and
+                        // tear down — backpressure forces the session to close rather than silently
+                        // dropping data.  remaining bufs are released by the finally block below.
                         for (i in 0 until numChunks) {
                             val buf = bufs[i]!!
-                            if (tunWriteQueue.trySend(PacketWrite(buf, chunkLens[i], fromPool = true)).isSuccess) {
-                                VpnStats.tunWriteQueueDepth.incrementAndGet()
+                            val pw = PacketWrite(buf, chunkLens[i], fromPool = true, priority = WritePriority.DATA)
+                            if (tunWriteDataQueue.trySend(pw).isSuccess) {
+                                VpnStats.tunWriteDataDepth.incrementAndGet()
                                 bufs[i] = null  // ownership transferred — skip in finally
                             } else {
-                                VpnStats.tcpTunWriteDrops.incrementAndGet()
-                                // bufs[i] stays non-null; finally releases it
+                                VpnStats.tunWriteDataDrops.incrementAndGet()
+                                send(TcpPacketBuilder.buildRst(dstIp, srcIp, dstPort, srcPort, 0L, 0L), "RST data-queue-full")
+                                backpressureTeardown = true
+                                break
                             }
                         }
                     } finally {
                         for (buf in bufs) if (buf != null) PacketPool.release(buf)
+                    }
+                    if (backpressureTeardown) {
+                        teardown()
+                        break
                     }
                 }
             } catch (e: CancellationException) {
@@ -511,10 +564,12 @@ class TcpSession(
     }
 
     // ── Point 8: packet written to TUN ────────────────────────────────────────
+    // Sends control packets (SYN-ACK, ACK, RST, FIN-ACK) via the high-priority control queue.
     private fun send(pkt: ByteArray, desc: String = "?") {
         if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
-        if (tunWriteQueue.trySend(PacketWrite(pkt, pkt.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
-        else VpnStats.tcpTunWriteDrops.incrementAndGet()
+        val pw = PacketWrite(pkt, pkt.size, priority = WritePriority.CONTROL)
+        if (tunWriteControlQueue.trySend(pw).isSuccess) VpnStats.tunWriteControlDepth.incrementAndGet()
+        else VpnStats.tunWriteControlDrops.incrementAndGet()
     }
 
     private fun teardown() {
@@ -533,13 +588,16 @@ class TcpSession(
     }
 
     companion object {
-        private const val TAG                 = "TcpSession"
-        private const val VERBOSE_PACKET_LOGS = false   // set true to trace every packet in debug builds
-        private const val CONNECT_TIMEOUT_MS  = 2_500
-        private const val CONNECT_WARN_MS     = 500     // log warning if TCP connect exceeds this
-        private const val READ_BUFFER_SIZE    = 131_072
-        private const val MSS                 = 1_460  // MTU(1500) − IP(20) − TCP(20)
-        private const val HIGH_QUEUE_THRESHOLD = 64    // warn and count when session queue exceeds this
+        private const val TAG                    = "TcpSession"
+        private const val VERBOSE_PACKET_LOGS    = false   // set true to trace every packet in debug builds
+        private const val CONNECT_TIMEOUT_MS     = 2_500
+        private const val CONNECT_WARN_MS        = 500     // log warning if TCP connect exceeds this
+        private const val READ_BUFFER_SIZE       = 131_072
+        private const val MSS                    = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val HIGH_QUEUE_THRESHOLD   = 64     // warn and count when session queue exceeds this
+        const val NO_FIRST_BYTE_TIMEOUT_MS       = 15_000L  // tear down if no server byte in 15 s
+        const val IDLE_SESSION_TIMEOUT_MS        = 60_000L  // tear down after 60 s of no activity
+        const val MAX_SESSION_LIFETIME_MS        = 180_000L // hard cap: 3 minutes max lifetime
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"

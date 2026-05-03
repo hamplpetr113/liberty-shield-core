@@ -2,10 +2,13 @@ package com.libertyshield.agent.vpn
 
 import android.net.VpnService
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Semaphore
@@ -15,10 +18,13 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 
+enum class WritePriority { CONTROL, DATA }
+
 data class PacketWrite(
     val buffer: ByteArray,
     val length: Int,
     val fromPool: Boolean = false,
+    val priority: WritePriority = WritePriority.DATA,
 )
 
 class PacketForwarder(
@@ -32,21 +38,50 @@ class PacketForwarder(
     // Each forwardUdp() blocks an IO thread for up to SOCKET_TIMEOUT_MS (2 s). Without a
     // cap, a burst of QUIC/UDP traffic fills the 64-thread IO pool and starves TCP serverJobs.
     private val udpSemaphore  = Semaphore(MAX_UDP_CONCURRENT)
-    // Single drain coroutine serialises all TUN writes so TCP sessions never contend on a mutex.
-    private val tunWriteQueue = Channel<PacketWrite>(capacity = TUN_WRITE_QUEUE_CAPACITY)
+
+    // Two-tier TUN write queues.  Control (SYN-ACK, ACK, RST, FIN, UDP) has a dedicated
+    // 512-slot queue; data (server-response segments) gets 2 048 slots.  The writer loop
+    // drains all pending control packets before taking each data packet so control latency
+    // is never gated behind a large data burst.
+    private val tunWriteControlQueue = Channel<PacketWrite>(capacity = TUN_CONTROL_QUEUE_CAPACITY)
+    private val tunWriteDataQueue    = Channel<PacketWrite>(capacity = TUN_DATA_QUEUE_CAPACITY)
 
     init {
+        // Priority writer: check control (non-blocking) first every iteration; block on data
+        // only when no control is pending.  One write at a time serialises TUN writes so
+        // TCP sessions never contend on a lock.
         scope.launch(Dispatchers.IO) {
-            for (pkt in tunWriteQueue) {
-                try {
-                    tunOut.write(pkt.buffer, 0, pkt.length)
-                    tunOut.flush()
-                } finally {
-                    if (pkt.fromPool) PacketPool.release(pkt.buffer)
-                    VpnStats.tunWriteQueueDepth.decrementAndGet()
+            try {
+                while (true) {
+                    val ctrl = tunWriteControlQueue.tryReceive()
+                    if (ctrl.isSuccess) { writeAndRelease(ctrl.getOrThrow()); continue }
+                    val data = tunWriteDataQueue.receiveCatching()
+                    if (!data.isSuccess) break
+                    writeAndRelease(data.getOrThrow())
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } finally {
+                // Drain any pool buffers stranded in the data queue after shutdown.
+                var c = tunWriteDataQueue.tryReceive()
+                while (c.isSuccess) {
+                    val p = c.getOrThrow()
+                    if (p.fromPool) PacketPool.release(p.buffer)
+                    c = tunWriteDataQueue.tryReceive()
+                }
+                VpnStats.tunWriteControlDepth.set(0)
+                VpnStats.tunWriteDataDepth.set(0)
             }
-            VpnStats.tunWriteQueueDepth.set(0)
+        }
+
+        // Session reaper: every 5 s, close sessions that exceeded their expiry policy.
+        scope.launch {
+            delay(REAPER_INITIAL_DELAY_MS)
+            while (isActive) {
+                tcpSessions.pruneExpired()
+                delay(REAPER_INTERVAL_MS)
+            }
         }
     }
 
@@ -87,8 +122,30 @@ class PacketForwarder(
 
     fun shutdown() {
         tcpSessions.closeAll()
-        tunWriteQueue.close()
+        tunWriteControlQueue.close()
+        tunWriteDataQueue.close()
         scope.cancel()
+    }
+
+    private fun writeAndRelease(pkt: PacketWrite) {
+        try {
+            tunOut.write(pkt.buffer, 0, pkt.length)
+            tunOut.flush()
+        } finally {
+            if (pkt.fromPool) PacketPool.release(pkt.buffer)
+            when (pkt.priority) {
+                WritePriority.CONTROL -> VpnStats.tunWriteControlDepth.decrementAndGet()
+                WritePriority.DATA    -> VpnStats.tunWriteDataDepth.decrementAndGet()
+            }
+        }
+    }
+
+    // All non-data TUN writes (UDP, RST, session-cap reject) go through the control queue
+    // so they are never head-of-line blocked behind a burst of TCP data segments.
+    private fun sendControl(pkt: ByteArray) {
+        val pw = PacketWrite(pkt, pkt.size, priority = WritePriority.CONTROL)
+        if (tunWriteControlQueue.trySend(pw).isSuccess) VpnStats.tunWriteControlDepth.incrementAndGet()
+        else VpnStats.tunWriteControlDrops.incrementAndGet()
     }
 
     private suspend fun forwardUdp(buf: ByteArray, len: Int, packet: ParsedPacket) {
@@ -121,8 +178,7 @@ class PacketForwarder(
                     dstPort = packet.srcPort,
                     payload = cached,
                 )
-                if (tunWriteQueue.trySend(PacketWrite(response, response.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
-                else VpnStats.tcpTunWriteDrops.incrementAndGet()
+                sendControl(response)
                 return
             }
         }
@@ -160,8 +216,7 @@ class PacketForwarder(
                         dstPort = packet.srcPort,
                         payload = respPayload,
                     )
-                    if (tunWriteQueue.trySend(PacketWrite(response, response.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
-                    else VpnStats.tcpTunWriteDrops.incrementAndGet()
+                    sendControl(response)
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
                 } catch (_: java.net.SocketTimeoutException) {
                     if (isDns) VpnStats.dnsTimeouts.incrementAndGet()
@@ -182,14 +237,15 @@ class PacketForwarder(
             VpnStats.tcpSessionsCreated.incrementAndGet()
             VpnStats.tcpSessionsActive.incrementAndGet()
             TcpSession(
-                srcIp         = packet.srcIp,
-                srcPort       = packet.srcPort,
-                dstIp         = packet.dstIp,
-                dstPort       = packet.dstPort,
-                vpnService    = vpnService,
-                tunWriteQueue = tunWriteQueue,
-                scope         = scope,
-                onClose       = {
+                srcIp                = packet.srcIp,
+                srcPort              = packet.srcPort,
+                dstIp                = packet.dstIp,
+                dstPort              = packet.dstPort,
+                vpnService           = vpnService,
+                tunWriteControlQueue = tunWriteControlQueue,
+                tunWriteDataQueue    = tunWriteDataQueue,
+                scope                = scope,
+                onClose              = {
                     tcpSessions.remove(key)
                     VpnStats.tcpSessionsActive.decrementAndGet()
                     VpnStats.tcpSessionsClosed.incrementAndGet()
@@ -204,10 +260,7 @@ class PacketForwarder(
                     packet.dstIp, packet.srcIp, packet.dstPort, packet.srcPort,
                     0L, ack, ackFlag = true,
                 )
-                scope.launch {
-                    if (tunWriteQueue.trySend(PacketWrite(rst, rst.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
-                    else VpnStats.tcpTunWriteDrops.incrementAndGet()
-                }
+                sendControl(rst)
             }
             return
         }
@@ -284,13 +337,16 @@ class PacketForwarder(
     }
 
     companion object {
-        private const val TAG                 = "PacketForwarder"
-        private const val VERBOSE_PACKET_LOGS = false   // set true to trace every dispatch in debug builds
-        private const val DNS_TIMEOUT_MS      = 800     // tighter timeout for DNS — a miss causes visible delay
-        private const val SOCKET_TIMEOUT_MS   = 2_000   // general UDP timeout
-        private const val QUIC_PORT           = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
-        private const val MAX_UDP_PAYLOAD     = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
-        private const val MAX_UDP_CONCURRENT       = 32    // cap blocking IO threads for UDP; excess packets dropped
-        private const val TUN_WRITE_QUEUE_CAPACITY = 2048  // single drain coroutine; overflow increments tcpTunWriteDrops
+        private const val TAG                        = "PacketForwarder"
+        private const val VERBOSE_PACKET_LOGS        = false   // set true to trace every dispatch in debug builds
+        private const val DNS_TIMEOUT_MS             = 800     // tighter timeout for DNS — a miss causes visible delay
+        private const val SOCKET_TIMEOUT_MS          = 2_000   // general UDP timeout
+        private const val QUIC_PORT                  = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
+        private const val MAX_UDP_PAYLOAD            = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
+        private const val MAX_UDP_CONCURRENT         = 32      // cap blocking IO threads for UDP; excess packets dropped
+        private const val TUN_CONTROL_QUEUE_CAPACITY = 512     // SYN-ACK, ACK, RST, FIN, UDP responses
+        private const val TUN_DATA_QUEUE_CAPACITY    = 2_048   // TCP server-response data segments
+        private const val REAPER_INITIAL_DELAY_MS    = 5_000L  // first prune after 5 s so sessions have time to establish
+        private const val REAPER_INTERVAL_MS         = 5_000L  // prune interval
     }
 }
