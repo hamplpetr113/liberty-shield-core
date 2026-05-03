@@ -2,6 +2,7 @@ package com.libertyshield.agent
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.util.Log
 import android.net.NetworkCapabilities
 import com.libertyshield.agent.models.SensorEvent
 import com.libertyshield.agent.vpn.VpnStats
@@ -16,6 +17,7 @@ class GatewayClient(
     private val deviceId: String,
 ) {
     private val queue = ArrayDeque<String>()
+    private var lastQueueOverflowLogMs = 0L
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     init {
@@ -23,7 +25,18 @@ class GatewayClient(
     }
 
     fun enqueue(event: SensorEvent) {
-        synchronized(queue) { queue.addLast(event.toJson(deviceId)) }
+        synchronized(queue) {
+            if (queue.size >= MAX_QUEUE_SIZE) {
+                VpnStats.gwQueueRejected.incrementAndGet()
+                val now = System.currentTimeMillis()
+                if (now - lastQueueOverflowLogMs >= OVERFLOW_LOG_INTERVAL_MS) {
+                    lastQueueOverflowLogMs = now
+                    Log.w(TAG, "Gateway queue cap ($MAX_QUEUE_SIZE) reached — dropping telemetry event")
+                }
+                return
+            }
+            queue.addLast(event.toJson(deviceId))
+        }
     }
 
     private suspend fun sendLoop() {
@@ -64,4 +77,10 @@ class GatewayClient(
     }
 
     fun shutdown() = scope.cancel()
+
+    companion object {
+        private const val TAG = "GatewayClient"
+        private const val MAX_QUEUE_SIZE = 2048
+        private const val OVERFLOW_LOG_INTERVAL_MS = 10_000L
+    }
 }

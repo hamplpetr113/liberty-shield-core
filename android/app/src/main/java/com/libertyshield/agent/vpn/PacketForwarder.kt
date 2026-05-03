@@ -172,10 +172,43 @@ class PacketForwarder(
                     VpnStats.tcpSessionsClosed.incrementAndGet()
                 },
             )
-        } ?: return
+        }
+        if (session == null) {
+            // Session cap: new SYN rejected — RST|ACK to app. Non-SYN with no session: silent drop.
+            if (isSyn) {
+                val ack = tcpSynAckForRst(buf) ?: return
+                val rst = TcpPacketBuilder.buildRst(
+                    packet.dstIp, packet.srcIp, packet.dstPort, packet.srcPort,
+                    0L, ack, ackFlag = true,
+                )
+                scope.launch {
+                    writeMutex.withLock {
+                        tunOut.write(rst)
+                        tunOut.flush()
+                    }
+                }
+            }
+            return
+        }
         VpnStats.tcpPacketsIn.incrementAndGet()
         session.enqueue(buf)   // returns immediately; session's own coroutine handles it
     }
+
+    /** ACK for RST|ACK to a client SYN: client ISN + 1 (32-bit). Null if IPv4/TCP header not parseable. */
+    private fun tcpSynAckForRst(buf: ByteArray): Long? {
+        if (buf.size < 20) return null
+        if ((buf[0].toInt() and 0xF0) shr 4 != 4) return null
+        val ihl = (buf[0].toInt() and 0x0F) * 4
+        if (ihl < 20 || buf.size < ihl + 8) return null
+        val seq = readU32be(buf, ihl + 4)
+        return (seq + 1) and 0xFFFF_FFFFL
+    }
+
+    private fun readU32be(buf: ByteArray, offset: Int): Long =
+        ((buf[offset].toLong() and 0xFF) shl 24) or
+        ((buf[offset + 1].toLong() and 0xFF) shl 16) or
+        ((buf[offset + 2].toLong() and 0xFF) shl 8) or
+        (buf[offset + 3].toLong() and 0xFF)
 
     // Constructs a raw IPv4 + UDP packet to write back into the TUN fd.
     // UDP checksum is set to 0 (legal in IPv4; kernel accepts it from the TUN).

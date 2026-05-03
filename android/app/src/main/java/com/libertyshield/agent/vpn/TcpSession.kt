@@ -16,6 +16,7 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class TcpSession(
@@ -55,7 +56,8 @@ class TcpSession(
     // on overflow we send RST and tear down rather than silently dropping packets.
     private val inQueue    = Channel<ByteArray>(capacity = 256)
     private var queueJob: Job? = null
-    private val queueDepth = AtomicInteger(0)   // tracks enqueued-but-not-yet-handled count
+    private val tornDown   = AtomicBoolean(false) // CAS guard — ensures teardown() body runs exactly once
+    private val queueDepth = AtomicInteger(0)    // tracks enqueued-but-not-yet-handled count
     @Volatile private var highQueueLogged = false
 
     init {
@@ -514,7 +516,7 @@ class TcpSession(
     }
 
     private fun teardown() {
-        if (state == State.CLOSED_FINAL) return
+        if (!tornDown.compareAndSet(false, true)) return
         state = State.CLOSED_FINAL
         inQueue.close()     // causes the for-loop in queueJob to exit naturally
         queueJob?.cancel()  // belt-and-suspenders: also cancel if it's still waiting
