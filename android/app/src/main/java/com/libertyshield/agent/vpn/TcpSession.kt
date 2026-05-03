@@ -89,6 +89,8 @@ class TcpSession(
     }
 
     // ── Point 3: TcpSession receives packet ───────────────────────────────────
+    // sessionMutex: state, relaySeq/relayAck, synthetic send(...). forwardToServer() must not
+    // run under sessionMutex (blocking I/O); see processEstablishedSegment().
     private suspend fun handle(buf: ByteArray) {
         queueDepth.updateAndGet { maxOf(0, it - 1) }
         val seg = parseTcpSegment(buf) ?: return
@@ -111,15 +113,49 @@ class TcpSession(
             if (shouldConnect) onSyn(seg)
             return
         }
+        var establishedSegment: Pair<TcpSegment, ByteArray>? = null
         sessionMutex.withLock {
             when (state) {
-                State.CLOSED       -> handleClosed(seg)
-                State.SYN_RECEIVED -> handleSynReceived(seg, buf)
-                State.ESTABLISHED  -> handleEstablished(seg, buf)
-                State.FIN_WAIT     -> teardown()
-                State.CLOSED_FINAL -> Unit
+                State.CLOSED -> {
+                    handleClosed(seg)
+                    return@handle
+                }
+                State.SYN_RECEIVED -> when {
+                    seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> {
+                        teardown()
+                        return@handle
+                    }
+                    seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
+                        state = State.ESTABLISHED
+                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                            Log.d(TAG, "ESTABLISHED $srcIp:$srcPort→$dstIp:$dstPort payloadLen=${seg.payloadLen}")
+                        }
+                        startServerReader()
+                        if (seg.payloadLen > 0) {
+                            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                                Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort")
+                            }
+                        } else {
+                            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                                Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK — awaiting ClientHello")
+                            }
+                        }
+                        establishedSegment = seg to buf
+                    }
+                    else -> return@handle
+                }
+                State.ESTABLISHED -> {
+                    establishedSegment = seg to buf
+                }
+                State.FIN_WAIT -> {
+                    teardown()
+                    return@handle
+                }
+                State.CLOSED_FINAL -> return@handle
             }
         }
+
+        establishedSegment?.let { (s, b) -> processEstablishedSegment(s, b) }
     }
 
     fun close() {
@@ -288,66 +324,75 @@ class TcpSession(
         }
     }
 
-    private suspend fun handleSynReceived(seg: TcpSegment, buf: ByteArray) {
-        when {
-            seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> teardown()
-            seg.flags and TcpPacketBuilder.FLAG_ACK != 0 -> {
-                state = State.ESTABLISHED
-                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED $srcIp:$srcPort→$dstIp:$dstPort payloadLen=${seg.payloadLen}")
-                startServerReader()
-                if (seg.payloadLen > 0) {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SYN_RECEIVED→ESTABLISHED piggybacked ${seg.payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort")
-                } else {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SYN_RECEIVED→ESTABLISHED pure ACK — awaiting ClientHello")
+    /**
+     * ESTABLISHED (and first ACK after SYN_ACK) client→server processing.
+     * Lock: relaySeq/relayAck and send(...) only under sessionMutex.
+     * Unlock: forwardToServer() between retransmit check and new-data path, and on FIN payload.
+     * ACK after new data: relayAck advances only after forwardToServer returns so serverJob
+     * cannot snapshot an ACK number for bytes not yet written to the server socket.
+     */
+    private suspend fun processEstablishedSegment(seg: TcpSegment, buf: ByteArray) {
+        sessionMutex.withLock {
+            if (state != State.ESTABLISHED) return
+            if (seg.flags and TcpPacketBuilder.FLAG_RST != 0) {
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort→$dstIp:$dstPort")
                 }
-                handleEstablished(seg, buf)
+                teardown()
+                return
             }
         }
-    }
 
-    private suspend fun handleEstablished(seg: TcpSegment, buf: ByteArray) {
-        when {
-            seg.flags and TcpPacketBuilder.FLAG_RST != 0 -> {
-                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED RST $srcIp:$srcPort→$dstIp:$dstPort")
-                teardown()
-            }
-            seg.flags and TcpPacketBuilder.FLAG_FIN != 0 -> {
-                // Forward any payload piggybacked on the FIN segment before closing.
-                // RFC 793 allows data + FIN in the same segment; ignoring the payload
-                // (relayAck += 1 instead of += payloadLen + 1) drops the last bytes of
-                // the stream and corrupts POST bodies or HTTP/1.0 responses.
-                val payload = extractPayload(buf, seg)
-                if (payload.isNotEmpty()) {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED FIN piggybacked ${payload.size}B — forwarding before close $srcIp:$srcPort→$dstIp:$dstPort")
-                    forwardToServer(payload)
-                } else {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
+        if (seg.flags and TcpPacketBuilder.FLAG_FIN != 0) {
+            val payload = extractPayload(buf, seg)
+            if (payload.isNotEmpty()) {
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "ESTABLISHED FIN piggybacked ${payload.size}B — forwarding before close $srcIp:$srcPort→$dstIp:$dstPort")
                 }
+                forwardToServer(payload)
+            } else {
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "ESTABLISHED FIN $srcIp:$srcPort→$dstIp:$dstPort")
+                }
+            }
+            sessionMutex.withLock {
+                if (state != State.ESTABLISHED) return
                 relayAck = mask32(seg.seq + payload.size.toLong() + 1)
                 send(TcpPacketBuilder.buildFinAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "FIN|ACK")
                 relaySeq = mask32(relaySeq + 1)
                 teardown()
             }
-            else -> {
-                // ALL non-RST non-FIN packets reach here, including pure ACK and ACK+payload.
-                // Payload is forwarded whenever payloadLen > 0, regardless of which flags are set.
-                val payload = extractPayload(buf, seg)
-                if (payload.isNotEmpty()) {
-                    val nextSeq = mask32(seg.seq + payload.size)
-                    if (seq32Covered(nextSeq, relayAck)) {
-                        // Retransmit — these bytes were already forwarded; re-ACK without forwarding.
-                        // Forwarding duplicates corrupts the server stream (TLS_ALERT, Connection reset).
-                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s RETRANSMIT ${payload.size}B seq=${seg.seq} covered by relayAck=$relayAck — skip $srcIp:$srcPort→$dstIp:$dstPort")
-                        send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK retransmit")
-                        return
+            return
+        }
+
+        val payload = extractPayload(buf, seg)
+        if (payload.isNotEmpty()) {
+            val nextSeq = mask32(seg.seq + payload.size)
+            sessionMutex.withLock {
+                if (state != State.ESTABLISHED) return
+                if (seq32Covered(nextSeq, relayAck)) {
+                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "c→s RETRANSMIT ${payload.size}B seq=${seg.seq} covered by relayAck=$relayAck — skip $srcIp:$srcPort→$dstIp:$dstPort")
                     }
-                    relayAck = nextSeq
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
+                    send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK retransmit")
+                    return
+                }
+            }
+            forwardToServer(payload)
+            sessionMutex.withLock {
+                if (state != State.ESTABLISHED) return
+                relayAck = nextSeq
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "c→s ${payload.size}B flags=${flagsStr(seg.flags)} seq=${seg.seq} " +
                         "newRelayAck=$relayAck $srcIp:$srcPort→$dstIp:$dstPort")
-                    forwardToServer(payload)
-                    send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK")
-                } else {
-                    if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "c→s 0B pure-ACK flags=${flagsStr(seg.flags)} seq=${seg.seq} $srcIp:$srcPort→$dstIp:$dstPort")
+                }
+                send(TcpPacketBuilder.buildAck(dstIp, srcIp, dstPort, srcPort, relaySeq, relayAck), "ACK")
+            }
+        } else {
+            sessionMutex.withLock {
+                if (state != State.ESTABLISHED) return
+                if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "c→s 0B pure-ACK flags=${flagsStr(seg.flags)} seq=${seg.seq} $srcIp:$srcPort→$dstIp:$dstPort")
                 }
             }
         }
