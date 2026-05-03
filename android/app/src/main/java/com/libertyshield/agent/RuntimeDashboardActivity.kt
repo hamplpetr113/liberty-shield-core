@@ -51,6 +51,8 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statTcpFirstByteMaxMs:    TextView
     private lateinit var statTcpNoFirstByte:       TextView
     private lateinit var statTcpConnectFailures:   TextView
+    private lateinit var statTunWriteQueueDepth:   TextView
+    private lateinit var statTcpTunWriteDrops:     TextView
 
     // DNS
     private lateinit var statDnsCacheHits:       TextView
@@ -123,6 +125,8 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteMaxMs    = findViewById(R.id.stat_tcp_first_byte_max_ms)
         statTcpNoFirstByte       = findViewById(R.id.stat_tcp_no_first_byte)
         statTcpConnectFailures   = findViewById(R.id.stat_tcp_connect_failures)
+        statTunWriteQueueDepth   = findViewById(R.id.stat_tun_write_queue_depth)
+        statTcpTunWriteDrops     = findViewById(R.id.stat_tcp_tun_write_drops)
 
         statDnsCacheHits  = findViewById(R.id.stat_dns_cache_hits)
         statDnsTimeouts   = findViewById(R.id.stat_dns_timeouts)
@@ -193,6 +197,8 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteMaxMs.text    = "  tcpFirstByteMaxMs   :  ${VpnStats.tcpFirstByteMaxMs.get()} ms"
         statTcpNoFirstByte.text       = "  tcpNoFirstByte      :  ${VpnStats.tcpSessionsNoFirstByte.get()}"
         statTcpConnectFailures.text   = "  tcpConnectFailures  :  ${VpnStats.tcpConnectFailures.get()}"
+        statTunWriteQueueDepth.text   = "  tunWriteQueueDepth  :  ${VpnStats.tunWriteQueueDepth.get()}"
+        statTcpTunWriteDrops.text     = "  tcpTunWriteDrops    :  ${VpnStats.tcpTunWriteDrops.get()}"
 
         // DNS
         statDnsCacheHits.text  = "  dnsCacheHits        :  ${VpnStats.dnsCacheHits.get()}"

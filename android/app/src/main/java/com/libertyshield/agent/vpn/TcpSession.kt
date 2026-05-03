@@ -7,12 +7,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -25,8 +25,7 @@ class TcpSession(
     private val dstIp: String,
     private val dstPort: Int,
     private val vpnService: VpnService,
-    private val tunOut: FileOutputStream,
-    private val writeMutex: Mutex,
+    private val tunWriteQueue: SendChannel<PacketWrite>,
     private val scope: CoroutineScope,
     private val onClose: () -> Unit = {},
 ) {
@@ -275,8 +274,7 @@ class TcpSession(
     // Safety: PacketReader is a single coroutine — no other packet for this session
     // can arrive while we are here. The instance fields (relaySeq, relayAck, server,
     // serverOut, state) are therefore safe to write without the mutex in this phase.
-    // The mutex is acquired at the end only for the TUN write (consistent lock order:
-    // sessionMutex → writeMutex).
+    // The sessionMutex is acquired at the end only to update state and enqueue control packets.
     private suspend fun onSyn(seg: TcpSegment) {
         relaySeq = 0x1000_0000L
         relayAck = mask32(seg.seq + 1)
@@ -437,14 +435,12 @@ class TcpSession(
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
                     // Split into MSS-sized chunks (MTU 1500 → MSS 1460).
                     //
-                    // Three-phase mutex strategy:
+                    // Three-phase strategy:
                     //   Phase 1 — one sessionMutex lock for the whole read: snapshot relayAck,
                     //             record (seq, len) for each chunk, advance relaySeq. No allocs.
-                    //   Phase 2 — build IP/TCP packets outside every lock.
-                    //   Phase 3 — one writeMutex lock to batch-write all chunks to TUN.
-                    //
-                    // Previously: sessionMutex → writeMutex acquired per chunk (~90 times for a
-                    // 131 KB read), with packet allocation inside sessionMutex on every iteration.
+                    //   Phase 2 — build IP/TCP packets into pool buffers outside every lock.
+                    //   Phase 3 — trySend each chunk to tunWriteQueue (lock-free). Drain coroutine
+                    //             serialises TUN writes so parallel sessions never contend.
                     val numChunks = (n + MSS - 1) / MSS
                     val seqSnaps  = LongArray(numChunks)
                     val chunkLens = IntArray(numChunks)
@@ -470,30 +466,38 @@ class TcpSession(
 
                     // Phase 2: borrow pool buffers, build packets into them — zero per-packet allocation.
                     // chunkLens[i] starts as payload length; after buildDataInto it holds total pkt length.
-                    val bufs = ArrayList<ByteArray>(numChunks)
-                    var off  = 0
-                    for (i in 0 until numChunks) {
-                        val payloadLen = chunkLens[i]
-                        val buf = PacketPool.acquire()
-                        bufs.add(buf)
-                        chunkLens[i] = TcpPacketBuilder.buildDataInto(
-                            buf, dstIpInt, srcIpInt, dstPort, srcPort,
-                            seqSnaps[i], ackSnap, readBuf, off, payloadLen,
-                        )
-                        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
-                            Log.d(TAG, "[7] BUILD DATA ${payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
-                        }
-                        off += payloadLen
-                    }
-
-                    // Phase 3: one writeMutex acquisition for the entire batch
+                    // Nullable array: Phase 3 nulls each slot on successful enqueue so the finally
+                    // block only releases buffers whose ownership did NOT transfer to the drain coroutine.
+                    val bufs = arrayOfNulls<ByteArray>(numChunks)
                     try {
-                        writeMutex.withLock {
-                            for (i in 0 until numChunks) tunOut.write(bufs[i], 0, chunkLens[i])
-                            tunOut.flush()
+                        var off = 0
+                        for (i in 0 until numChunks) {
+                            val payloadLen = chunkLens[i]
+                            val buf = PacketPool.acquire()
+                            bufs[i] = buf
+                            chunkLens[i] = TcpPacketBuilder.buildDataInto(
+                                buf, dstIpInt, srcIpInt, dstPort, srcPort,
+                                seqSnaps[i], ackSnap, readBuf, off, payloadLen,
+                            )
+                            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) {
+                                Log.d(TAG, "[7] BUILD DATA ${payloadLen}B $srcIp:$srcPort→$dstIp:$dstPort seq=${seqSnaps[i]} ack=$ackSnap")
+                            }
+                            off += payloadLen
+                        }
+
+                        // Phase 3: enqueue all chunks; drain coroutine writes and releases pool buffers.
+                        for (i in 0 until numChunks) {
+                            val buf = bufs[i]!!
+                            if (tunWriteQueue.trySend(PacketWrite(buf, chunkLens[i], fromPool = true)).isSuccess) {
+                                VpnStats.tunWriteQueueDepth.incrementAndGet()
+                                bufs[i] = null  // ownership transferred — skip in finally
+                            } else {
+                                VpnStats.tcpTunWriteDrops.incrementAndGet()
+                                // bufs[i] stays non-null; finally releases it
+                            }
                         }
                     } finally {
-                        for (buf in bufs) PacketPool.release(buf)
+                        for (buf in bufs) if (buf != null) PacketPool.release(buf)
                     }
                 }
             } catch (e: CancellationException) {
@@ -507,12 +511,10 @@ class TcpSession(
     }
 
     // ── Point 8: packet written to TUN ────────────────────────────────────────
-    private suspend fun send(pkt: ByteArray, desc: String = "?") {
-        writeMutex.withLock {
-            if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
-            tunOut.write(pkt)
-            tunOut.flush()
-        }
+    private fun send(pkt: ByteArray, desc: String = "?") {
+        if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[8] TUN← ${pkt.size}B [$desc] $srcIp:$srcPort→$dstIp:$dstPort")
+        if (tunWriteQueue.trySend(PacketWrite(pkt, pkt.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
+        else VpnStats.tcpTunWriteDrops.incrementAndGet()
     }
 
     private fun teardown() {

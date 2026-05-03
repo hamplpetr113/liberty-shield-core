@@ -78,6 +78,10 @@ object VpnStats {
     // ── Runtime self-healing ─────────────────────────────────────────────────
     val runtimeRecoveries = AtomicLong()
 
+    // ── TUN write queue ───────────────────────────────────────────────────────
+    val tcpTunWriteDrops   = AtomicLong()
+    val tunWriteQueueDepth = AtomicInteger(0)
+
     // ── PacketReader throughput ───────────────────────────────────────────────
     val packetReaderTotal = AtomicLong()
     private var snapshotPkts   = 0L
@@ -120,6 +124,8 @@ object VpnStats {
         append(" dnsTout=").append(dnsTimeouts.get())
         append(" packetReaderRate=${pktRate}/s")
         append(" tcpRejCap=").append(tcpSessionsRejectedCap.get())
+        append(" tunWQDepth=").append(tunWriteQueueDepth.get())
+        append(" tunWDrops=").append(tcpTunWriteDrops.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
         append(" gwQRej=").append(gwQueueRejected.get())

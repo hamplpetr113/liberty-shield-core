@@ -7,27 +7,48 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 
+data class PacketWrite(
+    val buffer: ByteArray,
+    val length: Int,
+    val fromPool: Boolean = false,
+)
+
 class PacketForwarder(
     private val vpnService: VpnService,
     private val tunOut: FileOutputStream,
 ) {
-    private val scope       = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val writeMutex  = Mutex()   // guards concurrent writes to the single tunOut fd
-    private val tcpSessions = TcpSessionTable()
-    private val dnsCache    = DnsCache()
+    private val scope         = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val tcpSessions   = TcpSessionTable()
+    private val dnsCache      = DnsCache()
     // Caps concurrent blocking UDP coroutines to prevent Dispatchers.IO thread starvation.
     // Each forwardUdp() blocks an IO thread for up to SOCKET_TIMEOUT_MS (2 s). Without a
     // cap, a burst of QUIC/UDP traffic fills the 64-thread IO pool and starves TCP serverJobs.
-    private val udpSemaphore = Semaphore(MAX_UDP_CONCURRENT)
+    private val udpSemaphore  = Semaphore(MAX_UDP_CONCURRENT)
+    // Single drain coroutine serialises all TUN writes so TCP sessions never contend on a mutex.
+    private val tunWriteQueue = Channel<PacketWrite>(capacity = TUN_WRITE_QUEUE_CAPACITY)
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            for (pkt in tunWriteQueue) {
+                try {
+                    tunOut.write(pkt.buffer, 0, pkt.length)
+                    tunOut.flush()
+                } finally {
+                    if (pkt.fromPool) PacketPool.release(pkt.buffer)
+                    VpnStats.tunWriteQueueDepth.decrementAndGet()
+                }
+            }
+            VpnStats.tunWriteQueueDepth.set(0)
+        }
+    }
 
     // buf is owned by the caller's read loop and will be overwritten on the next iteration.
     // TCP: each session owns a Channel<ByteArray> and a dedicated processing coroutine.
@@ -66,6 +87,7 @@ class PacketForwarder(
 
     fun shutdown() {
         tcpSessions.closeAll()
+        tunWriteQueue.close()
         scope.cancel()
     }
 
@@ -99,7 +121,8 @@ class PacketForwarder(
                     dstPort = packet.srcPort,
                     payload = cached,
                 )
-                writeMutex.withLock { tunOut.write(response); tunOut.flush() }
+                if (tunWriteQueue.trySend(PacketWrite(response, response.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
+                else VpnStats.tcpTunWriteDrops.incrementAndGet()
                 return
             }
         }
@@ -137,7 +160,8 @@ class PacketForwarder(
                         dstPort = packet.srcPort,
                         payload = respPayload,
                     )
-                    writeMutex.withLock { tunOut.write(response); tunOut.flush() }
+                    if (tunWriteQueue.trySend(PacketWrite(response, response.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
+                    else VpnStats.tcpTunWriteDrops.incrementAndGet()
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "UDP ← ${packet.dstIp}:${packet.dstPort} (${respDgram.length}B)")
                 } catch (_: java.net.SocketTimeoutException) {
                     if (isDns) VpnStats.dnsTimeouts.incrementAndGet()
@@ -158,15 +182,14 @@ class PacketForwarder(
             VpnStats.tcpSessionsCreated.incrementAndGet()
             VpnStats.tcpSessionsActive.incrementAndGet()
             TcpSession(
-                srcIp      = packet.srcIp,
-                srcPort    = packet.srcPort,
-                dstIp      = packet.dstIp,
-                dstPort    = packet.dstPort,
-                vpnService = vpnService,
-                tunOut     = tunOut,
-                writeMutex = writeMutex,
-                scope      = scope,
-                onClose    = {
+                srcIp         = packet.srcIp,
+                srcPort       = packet.srcPort,
+                dstIp         = packet.dstIp,
+                dstPort       = packet.dstPort,
+                vpnService    = vpnService,
+                tunWriteQueue = tunWriteQueue,
+                scope         = scope,
+                onClose       = {
                     tcpSessions.remove(key)
                     VpnStats.tcpSessionsActive.decrementAndGet()
                     VpnStats.tcpSessionsClosed.incrementAndGet()
@@ -182,10 +205,8 @@ class PacketForwarder(
                     0L, ack, ackFlag = true,
                 )
                 scope.launch {
-                    writeMutex.withLock {
-                        tunOut.write(rst)
-                        tunOut.flush()
-                    }
+                    if (tunWriteQueue.trySend(PacketWrite(rst, rst.size)).isSuccess) VpnStats.tunWriteQueueDepth.incrementAndGet()
+                    else VpnStats.tcpTunWriteDrops.incrementAndGet()
                 }
             }
             return
@@ -269,6 +290,7 @@ class PacketForwarder(
         private const val SOCKET_TIMEOUT_MS   = 2_000   // general UDP timeout
         private const val QUIC_PORT           = 443     // UDP 443 = QUIC/HTTP3 — not supported, always dropped
         private const val MAX_UDP_PAYLOAD     = 65_507  // max UDP payload (65535 − 20 IP − 8 UDP)
-        private const val MAX_UDP_CONCURRENT  = 32      // cap blocking IO threads for UDP; excess packets dropped
+        private const val MAX_UDP_CONCURRENT       = 32    // cap blocking IO threads for UDP; excess packets dropped
+        private const val TUN_WRITE_QUEUE_CAPACITY = 2048  // single drain coroutine; overflow increments tcpTunWriteDrops
     }
 }
