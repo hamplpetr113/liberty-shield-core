@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import java.io.FileOutputStream
 import java.io.IOException
@@ -47,21 +48,30 @@ class PacketForwarder(
     private val tunWriteDataQueue    = Channel<PacketWrite>(capacity = TUN_DATA_QUEUE_CAPACITY)
 
     init {
-        // Priority writer: check control (non-blocking) first every iteration; block on data
-        // only when no control is pending.  One write at a time serialises TUN writes so
-        // TCP sessions never contend on a lock.
+        // Priority writer: drain ALL pending control first (drainControlQueue), then
+        // suspend on select{} waiting for either queue.  select{} prevents the writer
+        // from blocking exclusively on the data queue while control packets accumulate.
+        // This was the critical bug: receiveCatching(data) would block indefinitely
+        // during the handshake phase (no data yet), starving SYN-ACK/ACK/DNS writes.
         scope.launch(Dispatchers.IO) {
             try {
-                while (true) {
-                    val ctrl = tunWriteControlQueue.tryReceive()
-                    if (ctrl.isSuccess) { writeAndRelease(ctrl.getOrThrow()); continue }
-                    val data = tunWriteDataQueue.receiveCatching()
-                    if (!data.isSuccess) break
-                    writeAndRelease(data.getOrThrow())
+                while (isActive) {
+                    if (drainControlQueue()) continue
+
+                    // Suspend until either queue produces a packet.  Both channels are
+                    // registered so a control RST or SYN-ACK wakes the loop immediately
+                    // even when no data is flowing.  null means both channels are closed.
+                    val pkt = select<PacketWrite?> {
+                        tunWriteControlQueue.onReceiveCatching { it.getOrNull() }
+                        tunWriteDataQueue.onReceiveCatching    { it.getOrNull() }
+                    } ?: break
+
+                    writeAndRelease(pkt)
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.e(TAG, "TUN writer crashed", e)
             } finally {
                 // Drain any pool buffers stranded in the data queue after shutdown.
                 var c = tunWriteDataQueue.tryReceive()
@@ -125,6 +135,19 @@ class PacketForwarder(
         tunWriteControlQueue.close()
         tunWriteDataQueue.close()
         scope.cancel()
+    }
+
+    // Non-blocking drain: write every currently queued control packet, return true if
+    // any were written.  Called at the top of the writer loop so control always has
+    // priority over data without needing the writer to re-enter select each time.
+    private fun drainControlQueue(): Boolean {
+        var wrote = false
+        while (true) {
+            val ctrl = tunWriteControlQueue.tryReceive().getOrNull() ?: break
+            writeAndRelease(ctrl)
+            wrote = true
+        }
+        return wrote
     }
 
     private fun writeAndRelease(pkt: PacketWrite) {
