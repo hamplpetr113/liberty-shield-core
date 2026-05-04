@@ -25,9 +25,10 @@ class RuntimeDashboardActivity : Activity() {
     }
 
     // Controls
-    private lateinit var vpnStatus:    TextView
-    private lateinit var btnStartVpn:  Button
-    private lateinit var btnStopVpn:   Button
+    private lateinit var vpnStatus:      TextView
+    private lateinit var btnStartVpn:    Button
+    private lateinit var btnStopVpn:     Button
+    private lateinit var btnBatterySetup: Button
 
     // VPN diagnostics
     private lateinit var statVpnLastStopReason: TextView
@@ -131,9 +132,10 @@ class RuntimeDashboardActivity : Activity() {
     }
 
     private fun bindViews() {
-        vpnStatus   = findViewById(R.id.vpn_status)
-        btnStartVpn = findViewById(R.id.btn_start_vpn)
-        btnStopVpn  = findViewById(R.id.btn_stop_vpn)
+        vpnStatus       = findViewById(R.id.vpn_status)
+        btnStartVpn     = findViewById(R.id.btn_start_vpn)
+        btnStopVpn      = findViewById(R.id.btn_stop_vpn)
+        btnBatterySetup = findViewById(R.id.btn_battery_setup)
 
         btnStartVpn.setOnClickListener { startVpnFromDashboard() }
         btnStopVpn.setOnClickListener {
@@ -141,6 +143,9 @@ class RuntimeDashboardActivity : Activity() {
                 Intent(this, ShieldVpnService::class.java)
                     .setAction(ShieldVpnService.ACTION_STOP)
             )
+        }
+        btnBatterySetup.setOnClickListener {
+            startActivity(Intent(this, BatterySetupActivity::class.java))
         }
 
         statVpnLastStopReason = findViewById(R.id.stat_vpn_last_stop_reason)

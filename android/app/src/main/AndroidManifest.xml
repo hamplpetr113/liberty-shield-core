@@ -50,6 +50,11 @@
             android:label="Runtime Dashboard" />
 
         <activity
+            android:name=".BatterySetupActivity"
+            android:exported="false"
+            android:label="Battery Setup" />
+
+        <activity
             android:name=".VpnPermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
