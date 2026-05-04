@@ -98,11 +98,13 @@ class TcpSession(
 
     // Returns null (not expired) or the expiry reason string.
     // Called by the reaper from a different thread — all fields read here are @Volatile.
+    //
+    // Do not apply a hard lifetime cap to ESTABLISHED sessions; long-lived streams (radio,
+    // video, WebSocket, downloads) are valid TCP connections. Reap by no-first-byte or idle only.
     fun expiryReason(nowMs: Long): String? {
         if (state == State.CLOSED_FINAL) return "closed"
         if (!firstByteSeen && nowMs - createdAtMs >= NO_FIRST_BYTE_TIMEOUT_MS) return "no_first_byte"
         if (nowMs - lastActivityMs >= IDLE_SESSION_TIMEOUT_MS) return "idle"
-        if (nowMs - createdAtMs >= MAX_SESSION_LIFETIME_MS) return "lifetime"
         return null
     }
 
@@ -605,9 +607,8 @@ class TcpSession(
         private const val READ_BUFFER_SIZE       = 131_072
         private const val MSS                    = 1_460  // MTU(1500) − IP(20) − TCP(20)
         private const val HIGH_QUEUE_THRESHOLD   = 64     // warn and count when session queue exceeds this
-        const val NO_FIRST_BYTE_TIMEOUT_MS       = 15_000L  // tear down if no server byte in 15 s
-        const val IDLE_SESSION_TIMEOUT_MS        = 60_000L  // tear down after 60 s of no activity
-        const val MAX_SESSION_LIFETIME_MS        = 180_000L // hard cap: 3 minutes max lifetime
+        const val NO_FIRST_BYTE_TIMEOUT_MS       = 15_000L   // tear down if no server byte in 15 s
+        const val IDLE_SESSION_TIMEOUT_MS        = 120_000L  // tear down after 2 min of no activity (streams may pause between chunks)
 
         fun key(srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): String =
             "$srcIp:$srcPort->$dstIp:$dstPort"
