@@ -2,6 +2,7 @@ package com.libertyshield.agent
 
 import android.app.Activity
 import android.content.Intent
+import android.net.VpnService
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -18,6 +19,10 @@ import kotlinx.coroutines.launch
 class RuntimeDashboardActivity : Activity() {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    companion object {
+        private const val REQUEST_VPN = 2001
+    }
 
     // Controls
     private lateinit var vpnStatus:    TextView
@@ -91,17 +96,46 @@ class RuntimeDashboardActivity : Activity() {
         super.onDestroy()
     }
 
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_VPN && resultCode == RESULT_OK) {
+            startServices()
+        }
+        // Denied: do nothing — button re-enables naturally on the next updateStats() tick.
+    }
+
+    // Mirrors LauncherActivity.startServices(): start VPN and telemetry independently so
+    // VPN startup does not depend on ShieldService initialising without error.
+    private fun startServices() {
+        startForegroundService(
+            Intent(this, ShieldVpnService::class.java)
+                .setAction(ShieldVpnService.ACTION_START)
+        )
+        startForegroundService(Intent(this, ShieldService::class.java))
+    }
+
+    // Must call VpnService.prepare() before starting the VPN service; without it Android's
+    // VpnService.Builder.establish() returns null even if permission was granted before,
+    // and the VPN silently fails. LauncherActivity does this correctly on every start;
+    // the dashboard previously skipped it, which is why Start worked from LauncherActivity
+    // but not from the dashboard after a Stop.
+    private fun startVpnFromDashboard() {
+        btnStartVpn.isEnabled = false  // immediate feedback; re-enabled by updateStats() if start fails
+        val vpnIntent = VpnService.prepare(this)
+        if (vpnIntent != null) {
+            @Suppress("DEPRECATION")
+            startActivityForResult(vpnIntent, REQUEST_VPN)
+        } else {
+            startServices()
+        }
+    }
+
     private fun bindViews() {
         vpnStatus   = findViewById(R.id.vpn_status)
         btnStartVpn = findViewById(R.id.btn_start_vpn)
         btnStopVpn  = findViewById(R.id.btn_stop_vpn)
 
-        btnStartVpn.setOnClickListener {
-            startForegroundService(
-                Intent(this, ShieldVpnService::class.java)
-                    .setAction(ShieldVpnService.ACTION_START)
-            )
-        }
+        btnStartVpn.setOnClickListener { startVpnFromDashboard() }
         btnStopVpn.setOnClickListener {
             startService(
                 Intent(this, ShieldVpnService::class.java)
