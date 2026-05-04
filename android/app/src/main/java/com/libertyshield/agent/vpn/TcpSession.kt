@@ -49,6 +49,8 @@ class TcpSession(
     // Latency diagnostics — written by onSyn(), read by startServerReader().
     // @Volatile: onSyn() runs in queueJob, startServerReader() runs in serverJob.
     @Volatile private var connectDoneMs: Long = 0L
+    // Written by queueJob (forwardToServer), read by serverJob (first-byte section). @Volatile for cross-coroutine visibility.
+    @Volatile private var firstClientPayloadTimestampMs: Long = 0L
 
     // Session reaper fields — written by queueJob/serverJob, read by reaper coroutine.
     val createdAtMs: Long = System.currentTimeMillis()
@@ -449,9 +451,12 @@ class TcpSession(
                 return
             }
             if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: writing ${data.size}B to $dstIp:$dstPort")
+            if (firstClientPayloadTimestampMs == 0L) firstClientPayloadTimestampMs = System.currentTimeMillis()
             out.write(data)
             out.flush()
             lastActivityMs = System.currentTimeMillis()
+            VpnStats.tcpClientPayloadPackets.incrementAndGet()
+            VpnStats.tcpClientPayloadBytes.addAndGet(data.size.toLong())
             if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[5] forwardToServer: wrote ${data.size}B to $dstIp:$dstPort OK")
         } catch (e: Exception) {
             Log.w(TAG, "[5] forwardToServer: write failed ${data.size}B $dstIp:$dstPort: ${e.message}")
@@ -468,14 +473,22 @@ class TcpSession(
                 val readBuf = ByteArray(READ_BUFFER_SIZE)
                 var n       = 0
                 while (isActive && inp.read(readBuf).also { n = it } != -1) {
-                    lastActivityMs = System.currentTimeMillis()
+                    val readDoneMs = System.currentTimeMillis()
+                    lastActivityMs = readDoneMs
                     if (!firstByteReceived && n > 0) {
                         firstByteReceived = true
                         firstByteSeen = true
-                        val fbLatency = System.currentTimeMillis() - connectDoneMs
+                        val fbLatency = readDoneMs - connectDoneMs
                         VpnStats.tcpFirstByteCount.incrementAndGet()
                         VpnStats.tcpFirstByteTotalMs.addAndGet(fbLatency)
                         VpnStats.updateMax(VpnStats.tcpFirstByteMaxMs, fbLatency)
+                        val cpTs = firstClientPayloadTimestampMs
+                        if (cpTs > 0L) {
+                            val payloadToFbMs = readDoneMs - cpTs
+                            VpnStats.tcpFirstClientPayloadToFirstByteCount.incrementAndGet()
+                            VpnStats.tcpFirstClientPayloadToFirstByteTotalMs.addAndGet(payloadToFbMs)
+                            VpnStats.updateMax(VpnStats.tcpFirstClientPayloadToFirstByteMaxMs, payloadToFbMs)
+                        }
                     }
                     // ── Point 6: bytes read from server socket ─────────────────
                     if (VERBOSE_PACKET_LOGS && Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "[6] server→relay read ${n}B from $dstIp:$dstPort")
@@ -553,6 +566,10 @@ class TcpSession(
                     } finally {
                         for (buf in bufs) if (buf != null) PacketPool.release(buf)
                     }
+                    val enqueueMs = System.currentTimeMillis() - readDoneMs
+                    VpnStats.tcpServerReadToTunEnqueueCount.incrementAndGet()
+                    VpnStats.tcpServerReadToTunEnqueueTotalMs.addAndGet(enqueueMs)
+                    VpnStats.updateMax(VpnStats.tcpServerReadToTunEnqueueMaxMs, enqueueMs)
                     if (backpressureTeardown) {
                         teardown()
                         break

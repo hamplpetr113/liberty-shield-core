@@ -88,6 +88,20 @@ object VpnStats {
     val tunDataBackpressureWaits = AtomicLong()     // times soft backpressure was triggered
     val tunDataBackpressureMs    = AtomicLong()     // total ms spent waiting for data queue
 
+    // ── TCP client→server payload throughput ──────────────────────────────────
+    val tcpClientPayloadPackets = AtomicLong()      // client segments forwarded to server socket
+    val tcpClientPayloadBytes   = AtomicLong()      // bytes forwarded to server socket
+
+    // ── TCP payload-to-first-byte latency (client sends → server responds) ───
+    val tcpFirstClientPayloadToFirstByteCount    = AtomicLong()
+    val tcpFirstClientPayloadToFirstByteTotalMs  = AtomicLong()
+    val tcpFirstClientPayloadToFirstByteMaxMs    = AtomicLong()
+
+    // ── TCP server-read to TUN-enqueue latency (Phase 1 + 2 + 3 per read) ───
+    val tcpServerReadToTunEnqueueCount    = AtomicLong()
+    val tcpServerReadToTunEnqueueTotalMs  = AtomicLong()
+    val tcpServerReadToTunEnqueueMaxMs    = AtomicLong()
+
     // ── TCP session reaper ─────────────────────────────────────────────────────
     val tcpSessionsExpired            = AtomicLong()
     val tcpSessionsExpiredNoFirstByte = AtomicLong()
@@ -148,6 +162,16 @@ object VpnStats {
         append(" tunDataDrops=").append(tunWriteDataDrops.get())
         append(" tunDataBpWaits=").append(tunDataBackpressureWaits.get())
         append(" tunDataBpMs=").append(tunDataBackpressureMs.get())
+        append(" tcpClientPkts=").append(tcpClientPayloadPackets.get())
+        append(" tcpClientBytes=").append(tcpClientPayloadBytes.get())
+        val p2fbCount = tcpFirstClientPayloadToFirstByteCount.get()
+        val p2fbAvg   = if (p2fbCount > 0) tcpFirstClientPayloadToFirstByteTotalMs.get() / p2fbCount else -1L
+        append(" tcpP2FBAvgMs=").append(if (p2fbAvg >= 0) p2fbAvg else "n/a")
+        append(" tcpP2FBMaxMs=").append(tcpFirstClientPayloadToFirstByteMaxMs.get())
+        val srteCount = tcpServerReadToTunEnqueueCount.get()
+        val srteAvg   = if (srteCount > 0) tcpServerReadToTunEnqueueTotalMs.get() / srteCount else -1L
+        append(" tcpSRTEAvgMs=").append(if (srteAvg >= 0) srteAvg else "n/a")
+        append(" tcpSRTEMaxMs=").append(tcpServerReadToTunEnqueueMaxMs.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
         append(" gwQRej=").append(gwQueueRejected.get())

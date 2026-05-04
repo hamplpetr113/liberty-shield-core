@@ -56,7 +56,13 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statTcpFirstByteAvgMs:    TextView
     private lateinit var statTcpFirstByteMaxMs:    TextView
     private lateinit var statTcpNoFirstByte:       TextView
-    private lateinit var statTcpConnectFailures:     TextView
+    private lateinit var statTcpConnectFailures:         TextView
+    private lateinit var statTcpClientPayloadPackets:    TextView
+    private lateinit var statTcpClientPayloadBytes:      TextView
+    private lateinit var statTcpPayloadToFbAvgMs:        TextView
+    private lateinit var statTcpPayloadToFbMaxMs:        TextView
+    private lateinit var statTcpServerReadToTunAvgMs:    TextView
+    private lateinit var statTcpServerReadToTunMaxMs:    TextView
     private lateinit var statTunWriteControlDepth:    TextView
     private lateinit var statTunWriteControlMaxDepth: TextView
     private lateinit var statTunWriteDataDepth:       TextView
@@ -173,7 +179,13 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteAvgMs    = findViewById(R.id.stat_tcp_first_byte_avg_ms)
         statTcpFirstByteMaxMs    = findViewById(R.id.stat_tcp_first_byte_max_ms)
         statTcpNoFirstByte       = findViewById(R.id.stat_tcp_no_first_byte)
-        statTcpConnectFailures      = findViewById(R.id.stat_tcp_connect_failures)
+        statTcpConnectFailures          = findViewById(R.id.stat_tcp_connect_failures)
+        statTcpClientPayloadPackets     = findViewById(R.id.stat_tcp_client_payload_packets)
+        statTcpClientPayloadBytes       = findViewById(R.id.stat_tcp_client_payload_bytes)
+        statTcpPayloadToFbAvgMs         = findViewById(R.id.stat_tcp_payload_to_fb_avg_ms)
+        statTcpPayloadToFbMaxMs         = findViewById(R.id.stat_tcp_payload_to_fb_max_ms)
+        statTcpServerReadToTunAvgMs     = findViewById(R.id.stat_tcp_server_read_to_tun_avg_ms)
+        statTcpServerReadToTunMaxMs     = findViewById(R.id.stat_tcp_server_read_to_tun_max_ms)
         statTunWriteControlDepth   = findViewById(R.id.stat_tun_write_control_depth)
         statTunWriteControlMaxDepth= findViewById(R.id.stat_tun_write_control_max_depth)
         statTunWriteDataDepth      = findViewById(R.id.stat_tun_write_data_depth)
@@ -256,6 +268,18 @@ class RuntimeDashboardActivity : Activity() {
         statTcpFirstByteMaxMs.text    = "  tcpFirstByteMaxMs   :  ${VpnStats.tcpFirstByteMaxMs.get()} ms"
         statTcpNoFirstByte.text       = "  tcpNoFirstByte      :  ${VpnStats.tcpSessionsNoFirstByte.get()}"
         statTcpConnectFailures.text     = "  tcpConnectFailures   :  ${VpnStats.tcpConnectFailures.get()}"
+
+        val p2fbCount = VpnStats.tcpFirstClientPayloadToFirstByteCount.get()
+        val p2fbAvg   = if (p2fbCount > 0) "${VpnStats.tcpFirstClientPayloadToFirstByteTotalMs.get() / p2fbCount} ms" else "n/a"
+        val srteCount = VpnStats.tcpServerReadToTunEnqueueCount.get()
+        val srteAvg   = if (srteCount > 0) "${VpnStats.tcpServerReadToTunEnqueueTotalMs.get() / srteCount} ms" else "n/a"
+        statTcpClientPayloadPackets.text  = "  tcpClientPkts       :  ${VpnStats.tcpClientPayloadPackets.get()}"
+        statTcpClientPayloadBytes.text    = "  tcpClientBytes       :  ${VpnStats.tcpClientPayloadBytes.get()}"
+        statTcpPayloadToFbAvgMs.text      = "  tcpP2FBAvgMs        :  $p2fbAvg"
+        statTcpPayloadToFbMaxMs.text      = "  tcpP2FBMaxMs        :  ${VpnStats.tcpFirstClientPayloadToFirstByteMaxMs.get()} ms"
+        statTcpServerReadToTunAvgMs.text  = "  tcpSRTEAvgMs        :  $srteAvg"
+        statTcpServerReadToTunMaxMs.text  = "  tcpSRTEMaxMs        :  ${VpnStats.tcpServerReadToTunEnqueueMaxMs.get()} ms"
+
         statTunWriteControlDepth.text    = "  tunCtrlDepth        :  ${VpnStats.tunWriteControlDepth.get()}"
         statTunWriteControlMaxDepth.text = "  tunCtrlMaxDepth     :  ${VpnStats.tunWriteControlMaxDepth.get()}"
         statTunWriteDataDepth.text       = "  tunDataDepth        :  ${VpnStats.tunWriteDataDepth.get()}"

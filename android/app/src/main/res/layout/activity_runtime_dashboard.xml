@@ -196,6 +196,30 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
 
+            <TextView android:id="@+id/stat_tcp_client_payload_packets"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_client_payload_bytes"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_payload_to_fb_avg_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_payload_to_fb_max_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
+            <TextView android:id="@+id/stat_tcp_server_read_to_tun_avg_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_tcp_server_read_to_tun_max_ms"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FFAA44" />
+
             <TextView android:id="@+id/stat_tun_write_control_depth"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
