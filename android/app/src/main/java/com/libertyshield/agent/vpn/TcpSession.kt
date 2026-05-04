@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -508,6 +509,7 @@ class TcpSession(
                         }
                     }
                     if (!active) continue
+                    waitForDataQueueCapacity()
 
                     // Phase 2: borrow pool buffers, build packets into them — zero per-packet allocation.
                     // chunkLens[i] starts as payload length; after buildDataInto it holds total pkt length.
@@ -599,13 +601,34 @@ class TcpSession(
         onClose()
     }
 
+    // Suspends briefly if the data queue is congested, to avoid overwhelming the TUN writer.
+    // Polls at DATA_QUEUE_BACKPRESSURE_DELAY_MS intervals until depth drops below the soft limit
+    // or DATA_QUEUE_BACKPRESSURE_MAX_DELAY_MS has elapsed — whichever comes first.
+    private suspend fun waitForDataQueueCapacity() {
+        var waitedMs = 0L
+        while (
+            VpnStats.tunWriteDataDepth.get() > DATA_QUEUE_SOFT_LIMIT &&
+            waitedMs < DATA_QUEUE_BACKPRESSURE_MAX_DELAY_MS
+        ) {
+            delay(DATA_QUEUE_BACKPRESSURE_DELAY_MS)
+            waitedMs += DATA_QUEUE_BACKPRESSURE_DELAY_MS
+        }
+        if (waitedMs > 0) {
+            VpnStats.tunDataBackpressureWaits.incrementAndGet()
+            VpnStats.tunDataBackpressureMs.addAndGet(waitedMs)
+        }
+    }
+
     companion object {
         private const val TAG                    = "TcpSession"
         private const val VERBOSE_PACKET_LOGS    = false   // set true to trace every packet in debug builds
         private const val CONNECT_TIMEOUT_MS     = 2_500
         private const val CONNECT_WARN_MS        = 500     // log warning if TCP connect exceeds this
-        private const val READ_BUFFER_SIZE       = 131_072
-        private const val MSS                    = 1_460  // MTU(1500) − IP(20) − TCP(20)
+        private const val READ_BUFFER_SIZE       = 32_768   // 32 KB ≈ 23 MSS; limits per-read burst to reduce queue depth spikes
+        private const val MSS                    = 1_460   // MTU(1500) − IP(20) − TCP(20)
+        private const val DATA_QUEUE_SOFT_LIMIT           = 384    // start backpressure when data queue exceeds this depth
+        private const val DATA_QUEUE_BACKPRESSURE_DELAY_MS   = 2L  // poll interval while waiting for queue to drain
+        private const val DATA_QUEUE_BACKPRESSURE_MAX_DELAY_MS = 200L // hard cap: never wait more than 200 ms per read
         private const val HIGH_QUEUE_THRESHOLD   = 64     // warn and count when session queue exceeds this
         const val NO_FIRST_BYTE_TIMEOUT_MS       = 15_000L   // tear down if no server byte in 15 s
         const val IDLE_SESSION_TIMEOUT_MS        = 120_000L  // tear down after 2 min of no activity (streams may pause between chunks)

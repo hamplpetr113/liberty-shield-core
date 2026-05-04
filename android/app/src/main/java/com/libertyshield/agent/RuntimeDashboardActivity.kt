@@ -63,6 +63,8 @@ class RuntimeDashboardActivity : Activity() {
     private lateinit var statTunWriteDataMaxDepth:    TextView
     private lateinit var statTunWriteControlDrops:    TextView
     private lateinit var statTunWriteDataDrops:       TextView
+    private lateinit var statTunDataBackpressureWaits: TextView
+    private lateinit var statTunDataBackpressureMs:    TextView
     private lateinit var statTcpExpired:            TextView
     private lateinit var statTcpExpiredNoFirstByte: TextView
     private lateinit var statTcpExpiredIdle:        TextView
@@ -178,6 +180,8 @@ class RuntimeDashboardActivity : Activity() {
         statTunWriteDataMaxDepth   = findViewById(R.id.stat_tun_write_data_max_depth)
         statTunWriteControlDrops   = findViewById(R.id.stat_tun_write_control_drops)
         statTunWriteDataDrops      = findViewById(R.id.stat_tun_write_data_drops)
+        statTunDataBackpressureWaits = findViewById(R.id.stat_tun_data_backpressure_waits)
+        statTunDataBackpressureMs    = findViewById(R.id.stat_tun_data_backpressure_ms)
         statTcpExpired            = findViewById(R.id.stat_tcp_expired)
         statTcpExpiredNoFirstByte = findViewById(R.id.stat_tcp_expired_no_first_byte)
         statTcpExpiredIdle        = findViewById(R.id.stat_tcp_expired_idle)
@@ -258,6 +262,8 @@ class RuntimeDashboardActivity : Activity() {
         statTunWriteDataMaxDepth.text    = "  tunDataMaxDepth     :  ${VpnStats.tunWriteDataMaxDepth.get()}"
         statTunWriteControlDrops.text    = "  tunCtrlDrops        :  ${VpnStats.tunWriteControlDrops.get()}"
         statTunWriteDataDrops.text       = "  tunDataDrops        :  ${VpnStats.tunWriteDataDrops.get()}"
+        statTunDataBackpressureWaits.text = "  tunDataBpWaits      :  ${VpnStats.tunDataBackpressureWaits.get()}"
+        statTunDataBackpressureMs.text    = "  tunDataBpMs         :  ${VpnStats.tunDataBackpressureMs.get()}"
         statTcpExpired.text            = "  tcpExpired          :  ${VpnStats.tcpSessionsExpired.get()}"
         statTcpExpiredNoFirstByte.text = "  expNoFirstByte      :  ${VpnStats.tcpSessionsExpiredNoFirstByte.get()}"
         statTcpExpiredIdle.text        = "  expIdle             :  ${VpnStats.tcpSessionsExpiredIdle.get()}"

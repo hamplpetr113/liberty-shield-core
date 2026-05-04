@@ -85,6 +85,8 @@ object VpnStats {
     val tunWriteDataMaxDepth    = AtomicInteger(0)  // high-water mark for data queue depth
     val tunWriteControlDrops    = AtomicLong()      // non-zero only on VPN shutdown
     val tunWriteDataDrops       = AtomicLong()      // data backpressure drops
+    val tunDataBackpressureWaits = AtomicLong()     // times soft backpressure was triggered
+    val tunDataBackpressureMs    = AtomicLong()     // total ms spent waiting for data queue
 
     // ── TCP session reaper ─────────────────────────────────────────────────────
     val tcpSessionsExpired            = AtomicLong()
@@ -144,6 +146,8 @@ object VpnStats {
         append(" tunDataMaxD=").append(tunWriteDataMaxDepth.get())
         append(" tunCtrlDrops=").append(tunWriteControlDrops.get())
         append(" tunDataDrops=").append(tunWriteDataDrops.get())
+        append(" tunDataBpWaits=").append(tunDataBackpressureWaits.get())
+        append(" tunDataBpMs=").append(tunDataBackpressureMs.get())
         append(" gwOk=").append(gwPostOk.get())
         append(" gwFail=").append(gwPostFail.get())
         append(" gwQRej=").append(gwQueueRejected.get())
