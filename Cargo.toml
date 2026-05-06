@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/liberty-controlled-chaos",
     "crates/liberty-node-cli",
+    "server/exit-node",
 ]
 resolver = "2"
 
