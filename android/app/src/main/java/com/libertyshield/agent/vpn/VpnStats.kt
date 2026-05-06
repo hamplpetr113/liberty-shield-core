@@ -76,7 +76,9 @@ object VpnStats {
     val quicDropped = AtomicLong()
 
     // ── Runtime self-healing ─────────────────────────────────────────────────
-    val runtimeRecoveries = AtomicLong()
+    val runtimeRecoveries         = AtomicLong()   // same-TUN runtime recoveries
+    val fullVpnRecoveries         = AtomicLong()   // full re-establish (Builder.establish) recoveries
+    val fullVpnRecoverySuppressed = AtomicLong()   // recoveries blocked by rate-limit guard
 
     // ── TUN write queues (priority split: control + data) ─────────────────────
     val tunWriteControlDepth    = AtomicInteger(0)
@@ -154,6 +156,8 @@ object VpnStats {
         append(" tcpExpNoFB=").append(tcpSessionsExpiredNoFirstByte.get())
         append(" tcpExpIdle=").append(tcpSessionsExpiredIdle.get())
         append(" tcpExpLife=").append(tcpSessionsExpiredLifetime.get())
+        append(" fullVpnRecov=").append(fullVpnRecoveries.get())
+        append(" fullVpnSuppr=").append(fullVpnRecoverySuppressed.get())
         append(" tunCtrlDepth=").append(tunWriteControlDepth.get())
         append(" tunCtrlMaxD=").append(tunWriteControlMaxDepth.get())
         append(" tunDataDepth=").append(tunWriteDataDepth.get())

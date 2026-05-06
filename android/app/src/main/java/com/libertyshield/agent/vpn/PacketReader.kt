@@ -56,8 +56,9 @@ class PacketReader(
                     // continue the loop — one bad packet does not kill PacketReader
                 }
             }
-        } catch (_: IOException) {
-            Log.i(TAG, "PacketReader exited via IOException — VPN stopping")
+        } catch (e: IOException) {
+            Log.w(TAG, "PacketReader exited via IOException", e)
+            throw e   // propagate so launchPacketReader() can trigger full VPN re-establish
         }
     }
 
