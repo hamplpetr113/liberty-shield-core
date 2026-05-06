@@ -1,8 +1,5 @@
-mod config;
-mod metrics;
-mod packet;
-mod server;
-
+use liberty_exit_node::config::Config;
+use liberty_exit_node::server;
 use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
@@ -13,7 +10,7 @@ async fn main() {
         .unwrap_or_else(|_| "info".to_string());
     tracing_subscriber::fmt().with_env_filter(log_level).init();
 
-    let cfg = config::Config::from_env();
+    let cfg = Config::from_env();
 
     info!(bind = %cfg.bind_addr, "Liberty Exit Node starting");
     info!(health = %cfg.health_bind, "health endpoint starting");

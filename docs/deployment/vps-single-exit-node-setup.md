@@ -296,3 +296,95 @@ appear in release APKs.
 - No route rotation or cover traffic.
 - No device provisioning system yet; PSK must be manually configured.
 - This is an engineering MVP. Do not use for sensitive activity.
+
+---
+
+## v0.5.2 — Live Handshake Test
+
+> **Goal:** Verify that a Hello frame from a local PC reaches the VPS and is logged.
+> No real traffic is routed. No Android client involved.
+
+### On the VPS — start the server
+
+Install Rust (if not already present):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+Pull or copy the repository, then run:
+
+```bash
+cd liberty-shield
+LIBERTY_EXIT_BIND=0.0.0.0:51820 \
+LIBERTY_EXIT_HEALTH_BIND=127.0.0.1:8081 \
+LIBERTY_LOG_LEVEL=info \
+cargo run -p liberty-exit-node
+```
+
+Expected output:
+
+```
+INFO liberty_exit_node: Liberty Exit Node starting bind=0.0.0.0:51820
+INFO liberty_exit_node: health endpoint starting bind=127.0.0.1:8081
+INFO liberty_exit_node: LIBERTY_PSK not set — running without authentication (skeleton mode only)
+INFO liberty_exit_node: packet receive loop running
+```
+
+### On local PC — verify health via SSH tunnel
+
+Open an SSH tunnel to the health endpoint (keep open in a separate terminal):
+
+```bash
+ssh -L 8081:127.0.0.1:8081 <your-user>@<VPS_IP>
+```
+
+In another terminal:
+
+```bash
+curl http://127.0.0.1:8081/health
+```
+
+Expected:
+
+```json
+{"status":"ok","packets_rx":0,"packets_tx":0,"bytes_rx":0,"bytes_tx":0,"active_sessions":0,"parse_errors":0,"auth_failures":0}
+```
+
+### On local PC — send UDP Hello frame
+
+```bash
+LIBERTY_HELLO_TARGET=<VPS_IP>:51820 cargo run -p liberty-exit-node --bin send_hello
+```
+
+Expected client output:
+
+```
+target:     <VPS_IP>:51820
+frame_len:  27
+session_id: 1
+sequence:   1
+msg_type:   Hello
+sent OK
+```
+
+Expected server log (VPS terminal):
+
+```
+INFO liberty_exit_node: Hello frame received session=1
+```
+
+After sending, re-check health:
+
+```bash
+curl http://127.0.0.1:8081/health
+```
+
+`packets_rx` must be ≥ 1. `parse_errors` must be 0.
+
+### Important
+
+- Do NOT expose the health endpoint publicly. It must stay bound to `127.0.0.1:8081`.
+- Do NOT paste your VPS IP, SSH key, PSK, or credentials into chat or source code.
+- Frame is unencrypted at v0.5.2; do not send sensitive payloads.

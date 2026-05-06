@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 use tracing::{error, info, warn};
 
@@ -67,6 +67,15 @@ pub async fn run_health(bind: SocketAddr) {
     loop {
         match listener.accept().await {
             Ok((mut stream, _)) => {
+                // Drain the HTTP request so the receive buffer is empty before close.
+                // Without this, Windows sends RST instead of FIN when the socket closes.
+                let mut req_buf = [0u8; 2048];
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    stream.read(&mut req_buf),
+                )
+                .await;
+
                 let snap = METRICS.snapshot();
                 let body = format!(
                     "{{\"status\":\"ok\",\"packets_rx\":{},\"packets_tx\":{},\
@@ -86,6 +95,7 @@ pub async fn run_health(bind: SocketAddr) {
                     body,
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
             }
             Err(e) => {
                 error!(error = %e, "health endpoint accept error");

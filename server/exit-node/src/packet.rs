@@ -116,7 +116,6 @@ pub fn parse_frame(buf: &[u8]) -> Result<Frame, FrameError> {
     })
 }
 
-#[allow(dead_code)] // used by server once outbound sending is implemented
 pub fn encode_frame(frame: &Frame, out: &mut Vec<u8>) -> Result<(), FrameError> {
     if frame.payload.len() > MAX_PAYLOAD_SIZE {
         return Err(FrameError::PayloadTooLarge(frame.payload.len()));
