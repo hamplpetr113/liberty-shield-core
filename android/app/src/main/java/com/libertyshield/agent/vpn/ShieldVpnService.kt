@@ -11,6 +11,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.libertyshield.agent.BuildConfig
 import com.libertyshield.agent.GatewayClient
+import com.libertyshield.agent.tunnel.HelloFrameBuilder
+import com.libertyshield.agent.tunnel.TunnelClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -173,6 +175,7 @@ class ShieldVpnService : VpnService() {
             transition(VpnState.RUNNING)
             launchPacketReader(fwd, tunFd)
             startHeartbeat()
+            launchDebugHello()
         } catch (e: Exception) {
             Log.e(TAG, "startVpn() failed: ${e::class.java.simpleName}: ${e.message}", e)
             if (tun != null) {
@@ -442,6 +445,29 @@ class ShieldVpnService : VpnService() {
             while (isActive) {
                 delay(HEARTBEAT_MS)
                 Log.i(TAG, "heartbeat state=$vpnState ${VpnStats.summary()}")
+            }
+        }
+    }
+
+    // ── Debug authenticated Hello ─────────────────────────────────────────────
+
+    /**
+     * Fire-and-forget: sends one authenticated Hello frame to the exit node if
+     * [BuildConfig.DEBUG_PSK_HEX] is non-empty. Runs on the IO dispatcher; any
+     * failure is logged and swallowed — VPN startup is never affected.
+     *
+     * DEV ONLY — remove or gate behind a proper secret store before shipping production.
+     */
+    private fun launchDebugHello() {
+        val pskHex = BuildConfig.DEBUG_PSK_HEX
+        if (pskHex.isEmpty()) return
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val psk = HelloFrameBuilder.parsePsk(pskHex)
+                val sessionId = System.currentTimeMillis()
+                TunnelClient.sendHello(psk, sessionId, sequence = 1L)
+            }.onFailure { e ->
+                Log.e(TAG, "debug hello failed: ${e.message}")
             }
         }
     }
