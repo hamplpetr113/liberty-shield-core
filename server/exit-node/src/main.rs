@@ -1,7 +1,7 @@
 use liberty_exit_node::config::Config;
-use liberty_exit_node::server;
+use liberty_exit_node::server::{self, AuthMode};
 use tokio::net::UdpSocket;
-use tracing::{info, warn};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
@@ -12,12 +12,26 @@ async fn main() {
 
     let cfg = Config::from_env();
 
-    info!(bind = %cfg.bind_addr, "Liberty Exit Node starting");
-    info!(health = %cfg.health_bind, "health endpoint starting");
+    let auth = match (cfg.psk, cfg.dev_mode) {
+        (Some(psk), _) => {
+            info!("auth: HMAC-SHA256 PSK");
+            AuthMode::Psk(psk)
+        }
+        (None, true) => {
+            info!("auth: LIBERTY_ALLOW_UNAUTHENTICATED_DEV=1 — all frames accepted (dev only)");
+            AuthMode::DevAllowAll
+        }
+        (None, false) => {
+            error!(
+                "LIBERTY_PSK is not set and LIBERTY_ALLOW_UNAUTHENTICATED_DEV is not set. \
+                 Set LIBERTY_PSK to a 64-hex-character 32-byte key, or set \
+                 LIBERTY_ALLOW_UNAUTHENTICATED_DEV=1 for local development only."
+            );
+            std::process::exit(1);
+        }
+    };
 
-    if !cfg.psk_present {
-        warn!("LIBERTY_PSK not set — running without authentication (skeleton mode only)");
-    }
+    info!(bind = %cfg.bind_addr, "Liberty Exit Node starting");
 
     let socket = UdpSocket::bind(cfg.bind_addr)
         .await
@@ -26,7 +40,7 @@ async fn main() {
     info!("packet receive loop running");
 
     tokio::select! {
-        _ = server::run_udp(socket) => {},
+        _ = server::run_udp(socket, auth) => {},
         _ = server::run_health(cfg.health_bind) => {},
     }
 }
