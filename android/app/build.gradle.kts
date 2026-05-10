@@ -25,13 +25,22 @@ android {
         versionCode = 1
         versionName = "0.1"
         buildConfigField("String", "GATEWAY_URL", "\"http://192.168.68.107:8080/sensor/event\"")
-        // Debug-only PSK for authenticated Hello frames in dev builds.
-        // Empty string = no Hello sent. Never set a real PSK in source control.
-        buildConfigField(
-            "String",
-            "DEBUG_PSK_HEX",
-            "\"${localProps.getProperty("LIBERTY_DEBUG_PSK_HEX", "")}\"",
-        )
+        // DEBUG_PSK_HEX is intentionally absent from defaultConfig.
+        // It is set per build type below to prevent accidental embedding in release APKs.
+    }
+    buildTypes {
+        debug {
+            // Load PSK from local.properties (gitignored). Empty = no Hello sent.
+            buildConfigField(
+                "String",
+                "DEBUG_PSK_HEX",
+                "\"${localProps.getProperty("LIBERTY_DEBUG_PSK_HEX", "")}\"",
+            )
+        }
+        release {
+            // Release builds must never embed a debug PSK, regardless of local.properties.
+            buildConfigField("String", "DEBUG_PSK_HEX", "\"\"")
+        }
     }
     buildFeatures {
         buildConfig = true

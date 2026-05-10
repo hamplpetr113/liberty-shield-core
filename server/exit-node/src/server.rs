@@ -53,8 +53,13 @@ pub(crate) fn process_received(buf: &[u8], auth: &AuthMode) -> FrameAction {
             }
             AuthMode::DevAllowAll => FrameAction::Accept(frame),
         },
-        // Data / Keepalive / Close: per-frame authentication is deferred to v0.6 Noise XX.
-        _ => FrameAction::Accept(frame),
+        // Data / Keepalive / Close: rejected in PSK mode — no session auth until v0.6 Noise XX.
+        _ => match auth {
+            AuthMode::Psk(_) => FrameAction::AuthFail {
+                session_id: frame.session_id,
+            },
+            AuthMode::DevAllowAll => FrameAction::Accept(frame),
+        },
     }
 }
 
@@ -100,7 +105,7 @@ pub async fn run_udp(socket: UdpSocket, auth: AuthMode) {
                     warn!(
                         peer = %peer,
                         session = session_id,
-                        "Hello auth failure — MAC invalid, frame rejected"
+                        "frame rejected — unauthenticated (auth_failures incremented)"
                     );
                 }
                 FrameAction::ParseFail => {
@@ -338,10 +343,10 @@ mod tests {
         ));
     }
 
-    // --- Non-Hello frames (auth deferred to v0.6) ---
+    // --- Non-Hello frames: rejected in PSK mode, accepted in DevAllowAll ---
 
     #[test]
-    fn data_frame_accepted_in_psk_mode() {
+    fn data_frame_rejected_in_psk_mode() {
         let frame = Frame {
             version: VERSION_1,
             msg_type: MessageType::Data,
@@ -354,12 +359,12 @@ mod tests {
         encode_frame(&frame, &mut buf).unwrap();
         assert!(matches!(
             process_received(&buf, &AuthMode::Psk(PSK)),
-            FrameAction::Accept(_)
+            FrameAction::AuthFail { .. }
         ));
     }
 
     #[test]
-    fn keepalive_accepted_in_psk_mode() {
+    fn keepalive_rejected_in_psk_mode() {
         let frame = Frame {
             version: VERSION_1,
             msg_type: MessageType::Keepalive,
@@ -372,6 +377,78 @@ mod tests {
         encode_frame(&frame, &mut buf).unwrap();
         assert!(matches!(
             process_received(&buf, &AuthMode::Psk(PSK)),
+            FrameAction::AuthFail { .. }
+        ));
+    }
+
+    #[test]
+    fn close_rejected_in_psk_mode() {
+        let frame = Frame {
+            version: VERSION_1,
+            msg_type: MessageType::Close,
+            flags: 0,
+            session_id: 7,
+            sequence: 3,
+            payload: vec![],
+        };
+        let mut buf = Vec::new();
+        encode_frame(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            process_received(&buf, &AuthMode::Psk(PSK)),
+            FrameAction::AuthFail { .. }
+        ));
+    }
+
+    #[test]
+    fn dev_mode_data_accepted() {
+        let frame = Frame {
+            version: VERSION_1,
+            msg_type: MessageType::Data,
+            flags: 0,
+            session_id: 1,
+            sequence: 1,
+            payload: b"data".to_vec(),
+        };
+        let mut buf = Vec::new();
+        encode_frame(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            process_received(&buf, &AuthMode::DevAllowAll),
+            FrameAction::Accept(_)
+        ));
+    }
+
+    #[test]
+    fn dev_mode_keepalive_accepted() {
+        let frame = Frame {
+            version: VERSION_1,
+            msg_type: MessageType::Keepalive,
+            flags: 0,
+            session_id: 1,
+            sequence: 0,
+            payload: vec![],
+        };
+        let mut buf = Vec::new();
+        encode_frame(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            process_received(&buf, &AuthMode::DevAllowAll),
+            FrameAction::Accept(_)
+        ));
+    }
+
+    #[test]
+    fn dev_mode_close_accepted() {
+        let frame = Frame {
+            version: VERSION_1,
+            msg_type: MessageType::Close,
+            flags: 0,
+            session_id: 7,
+            sequence: 3,
+            payload: vec![],
+        };
+        let mut buf = Vec::new();
+        encode_frame(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            process_received(&buf, &AuthMode::DevAllowAll),
             FrameAction::Accept(_)
         ));
     }

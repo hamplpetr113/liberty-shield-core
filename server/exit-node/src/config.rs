@@ -11,6 +11,12 @@ pub struct Config {
     pub dev_mode: bool,
 }
 
+/// Returns true only when the env var value is exactly `"1"`.
+/// Any other value ("0", "false", "true", "", unset) leaves dev mode disabled.
+pub fn parse_dev_mode(val: Option<&str>) -> bool {
+    val == Some("1")
+}
+
 /// Parse a hex-encoded 32-byte PSK string.
 /// Panics with a clear message on invalid input — intended for startup validation only.
 /// The PSK value is never stored as a string after this call.
@@ -33,7 +39,11 @@ impl Config {
             .parse()
             .expect("LIBERTY_EXIT_HEALTH_BIND must be a valid socket address");
 
-        let dev_mode = std::env::var("LIBERTY_ALLOW_UNAUTHENTICATED_DEV").is_ok();
+        let dev_mode = parse_dev_mode(
+            std::env::var("LIBERTY_ALLOW_UNAUTHENTICATED_DEV")
+                .ok()
+                .as_deref(),
+        );
         let psk = std::env::var("LIBERTY_PSK").ok().map(|v| parse_psk(&v));
 
         Self {
@@ -88,5 +98,42 @@ mod tests {
     #[should_panic(expected = "valid hex")]
     fn psk_non_hex_panics() {
         parse_psk("gghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz00112233445566778899aabb");
+    }
+
+    // ── dev_mode parsing ──────────────────────────────────────────────────────
+
+    #[test]
+    fn dev_mode_enabled_for_exact_one() {
+        assert!(parse_dev_mode(Some("1")));
+    }
+
+    #[test]
+    fn dev_mode_disabled_when_not_set() {
+        assert!(!parse_dev_mode(None));
+    }
+
+    #[test]
+    fn dev_mode_disabled_for_zero() {
+        assert!(!parse_dev_mode(Some("0")));
+    }
+
+    #[test]
+    fn dev_mode_disabled_for_false() {
+        assert!(!parse_dev_mode(Some("false")));
+    }
+
+    #[test]
+    fn dev_mode_disabled_for_true() {
+        assert!(!parse_dev_mode(Some("true")));
+    }
+
+    #[test]
+    fn dev_mode_disabled_for_empty_string() {
+        assert!(!parse_dev_mode(Some("")));
+    }
+
+    #[test]
+    fn dev_mode_disabled_for_yes() {
+        assert!(!parse_dev_mode(Some("yes")));
     }
 }

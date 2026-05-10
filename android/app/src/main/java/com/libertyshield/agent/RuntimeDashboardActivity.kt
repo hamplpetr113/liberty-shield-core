@@ -349,7 +349,10 @@ class RuntimeDashboardActivity : Activity() {
 
     private fun onSendVpsHello() {
         val pskHex = BuildConfig.DEBUG_PSK_HEX
-        if (pskHex.isEmpty()) {
+        // Validate PSK before launching IO — gives a specific error for missing vs. malformed.
+        val psk = try {
+            HelloFrameBuilder.parsePsk(pskHex)
+        } catch (e: IllegalArgumentException) {
             helloUiState = HelloUiState.DONE
             helloResult = TunnelClient.HelloResult(
                 success = false,
@@ -359,7 +362,10 @@ class RuntimeDashboardActivity : Activity() {
                 sequence = 0L,
                 authMode = "none",
                 sentAtMillis = System.currentTimeMillis(),
-                errorMessage = "PSK not configured — set LIBERTY_DEBUG_PSK_HEX in local.properties",
+                errorMessage = if (pskHex.isEmpty())
+                    "PSK not configured — set LIBERTY_DEBUG_PSK_HEX in local.properties"
+                else
+                    "PSK invalid: ${(e.message ?: "bad format").take(80)}",
             )
             updateHelloCard()
             return
@@ -370,7 +376,6 @@ class RuntimeDashboardActivity : Activity() {
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val psk = HelloFrameBuilder.parsePsk(pskHex)
                     TunnelClient.sendHello(psk, sessionId = System.currentTimeMillis(), sequence = 1L)
                 }.getOrElse { e ->
                     TunnelClient.HelloResult(
@@ -385,7 +390,6 @@ class RuntimeDashboardActivity : Activity() {
                     )
                 }
             }
-            // Back on Main dispatcher (scope default)
             helloUiState = HelloUiState.DONE
             helloResult = result
             btnSendVpsHello.isEnabled = true
@@ -395,9 +399,17 @@ class RuntimeDashboardActivity : Activity() {
 
     private fun updateHelloCard() {
         val pskHex = BuildConfig.DEBUG_PSK_HEX
-        val pskOk = pskHex.isNotEmpty()
+        val (pskStatus, pskOk) = when {
+            pskHex.isEmpty() -> "missing" to false
+            else -> try {
+                HelloFrameBuilder.parsePsk(pskHex)
+                "valid" to true
+            } catch (e: IllegalArgumentException) {
+                "invalid: ${(e.message ?: "bad format").take(60)}" to false
+            }
+        }
         statVpsHelloTarget.text = "  target              :  ${TunnelClient.EXIT_NODE_HOST}:${TunnelClient.EXIT_NODE_PORT}"
-        statVpsHelloPskConfigured.text = "  pskConfigured       :  $pskOk"
+        statVpsHelloPskConfigured.text = "  pskConfigured       :  $pskStatus"
         statVpsHelloPskConfigured.setTextColor(if (pskOk) 0xFF00CC66.toInt() else 0xFFFF4444.toInt())
 
         val result = helloResult
@@ -415,7 +427,9 @@ class RuntimeDashboardActivity : Activity() {
                 statVpsHelloResult.setTextColor(0xFFFFAA44.toInt())
             }
             HelloUiState.DONE -> if (result != null) {
-                val label = if (result.success) "sent OK" else "error"
+                // "UDP send OK" = datagram was dispatched locally. VPS acceptance is
+                // confirmed separately by health-counter polling, not by this UI.
+                val label = if (result.success) "UDP send OK" else "error"
                 val color = if (result.success) 0xFF00CC66.toInt() else 0xFFFF4444.toInt()
                 statVpsHelloResult.text = "  lastResult          :  $label"
                 statVpsHelloResult.setTextColor(color)
