@@ -4,6 +4,8 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -164,6 +166,63 @@ class HelloFrameBuilderTest {
         val frame = HelloFrameBuilder.buildHelloFrame(zeroPsk, 0L, 0L)
         assertNotNull(frame)
         assertEquals(59, frame.size)
+    }
+
+    // ── HelloResult model ─────────────────────────────────────────────────────
+
+    @Test
+    fun helloResult_sentAtMillisIsPopulated() {
+        val before = System.currentTimeMillis()
+        val result = TunnelClient.HelloResult(
+            success = true,
+            target = "89.221.214.211:51820",
+            frameLen = 59,
+            sessionId = 42L,
+            sequence = 1L,
+            authMode = "HMAC-SHA256",
+            sentAtMillis = System.currentTimeMillis(),
+        )
+        val after = System.currentTimeMillis()
+        assertTrue("sentAtMillis must be within test window", result.sentAtMillis in before..after)
+    }
+
+    @Test
+    fun helloResult_visibleFieldsContainNoHexSecret() {
+        val result = TunnelClient.HelloResult(
+            success = true,
+            target = "89.221.214.211:51820",
+            frameLen = 59,
+            sessionId = 1L,
+            sequence = 1L,
+            authMode = "HMAC-SHA256",
+            sentAtMillis = 1000L,
+        )
+        // None of the human-readable string fields may contain a 64-char hex sequence (real PSK shape)
+        val hexPattern = Regex("[a-fA-F0-9]{64}")
+        assertFalse(hexPattern.containsMatchIn(result.target))
+        assertFalse(hexPattern.containsMatchIn(result.authMode))
+        assertNull(result.errorMessage)
+    }
+
+    @Test
+    fun helloResult_errorMessageDoesNotLeakSecret() {
+        val safeError = "Connection refused: 89.221.214.211"
+        val result = TunnelClient.HelloResult(
+            success = false,
+            target = "89.221.214.211:51820",
+            frameLen = 0,
+            sessionId = 0L,
+            sequence = 1L,
+            authMode = "HMAC-SHA256",
+            sentAtMillis = System.currentTimeMillis(),
+            errorMessage = safeError,
+        )
+        assertNotNull(result.errorMessage)
+        assertFalse(
+            "Error message must not contain a 64-hex PSK-shaped value",
+            result.errorMessage!!.matches(Regex("[a-fA-F0-9]{64}")),
+        )
+        assertEquals(safeError, result.errorMessage)
     }
 
     // Helper — duplicated locally so the test has no dependency on HelloFrameBuilder internals

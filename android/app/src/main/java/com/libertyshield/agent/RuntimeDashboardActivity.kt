@@ -6,6 +6,8 @@ import android.net.VpnService
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
+import com.libertyshield.agent.tunnel.HelloFrameBuilder
+import com.libertyshield.agent.tunnel.TunnelClient
 import com.libertyshield.agent.vpn.ShieldVpnService
 import com.libertyshield.agent.vpn.VpnStats
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +17,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class RuntimeDashboardActivity : Activity() {
 
@@ -23,6 +26,24 @@ class RuntimeDashboardActivity : Activity() {
     companion object {
         private const val REQUEST_VPN = 2001
     }
+
+    // ── VPS Hello Test state ──────────────────────────────────────────────────
+
+    private enum class HelloUiState { IDLE, SENDING, DONE }
+    private var helloUiState = HelloUiState.IDLE
+    private var helloResult: TunnelClient.HelloResult? = null
+
+    // VPS Hello Test views
+    private lateinit var statVpsHelloTarget:        TextView
+    private lateinit var statVpsHelloPskConfigured: TextView
+    private lateinit var statVpsHelloResult:        TextView
+    private lateinit var statVpsHelloFrameLen:      TextView
+    private lateinit var statVpsHelloSessionId:     TextView
+    private lateinit var statVpsHelloTimestamp:     TextView
+    private lateinit var statVpsHelloError:         TextView
+    private lateinit var btnSendVpsHello:           Button
+
+    // ── Controls ──────────────────────────────────────────────────────────────
 
     // Controls
     private lateinit var vpnStatus:      TextView
@@ -156,6 +177,18 @@ class RuntimeDashboardActivity : Activity() {
             startActivity(Intent(this, BatterySetupActivity::class.java))
         }
 
+        // VPS Hello Test
+        statVpsHelloTarget        = findViewById(R.id.stat_vps_hello_target)
+        statVpsHelloPskConfigured = findViewById(R.id.stat_vps_hello_psk_configured)
+        statVpsHelloResult        = findViewById(R.id.stat_vps_hello_result)
+        statVpsHelloFrameLen      = findViewById(R.id.stat_vps_hello_frame_len)
+        statVpsHelloSessionId     = findViewById(R.id.stat_vps_hello_session_id)
+        statVpsHelloTimestamp     = findViewById(R.id.stat_vps_hello_timestamp)
+        statVpsHelloError         = findViewById(R.id.stat_vps_hello_error)
+        btnSendVpsHello           = findViewById(R.id.btn_send_vps_hello)
+        btnSendVpsHello.setOnClickListener { onSendVpsHello() }
+        updateHelloCard()
+
         statVpnLastStopReason = findViewById(R.id.stat_vpn_last_stop_reason)
         statVpnStopCount      = findViewById(R.id.stat_vpn_stop_count)
         statVpnLastStopAge    = findViewById(R.id.stat_vpn_last_stop_age)
@@ -222,6 +255,7 @@ class RuntimeDashboardActivity : Activity() {
     }
 
     private fun updateStats() {
+        updateHelloCard()
         val vpnOn = VpnStats.vpnEstablished.get()
         vpnStatus.text      = "VPN status: ${if (vpnOn) "ON" else "OFF"}"
         vpnStatus.setTextColor(if (vpnOn) 0xFF00CC66.toInt() else 0xFFFF4444.toInt())
@@ -309,5 +343,89 @@ class RuntimeDashboardActivity : Activity() {
 
         // Connection
         statSlowConnects.text  = "  tcpSlowConnects     :  ${VpnStats.tcpSlowConnects.get()}"
+    }
+
+    // ── VPS Hello Test ────────────────────────────────────────────────────────
+
+    private fun onSendVpsHello() {
+        val pskHex = BuildConfig.DEBUG_PSK_HEX
+        if (pskHex.isEmpty()) {
+            helloUiState = HelloUiState.DONE
+            helloResult = TunnelClient.HelloResult(
+                success = false,
+                target = "${TunnelClient.EXIT_NODE_HOST}:${TunnelClient.EXIT_NODE_PORT}",
+                frameLen = 0,
+                sessionId = 0L,
+                sequence = 0L,
+                authMode = "none",
+                sentAtMillis = System.currentTimeMillis(),
+                errorMessage = "PSK not configured — set LIBERTY_DEBUG_PSK_HEX in local.properties",
+            )
+            updateHelloCard()
+            return
+        }
+        helloUiState = HelloUiState.SENDING
+        btnSendVpsHello.isEnabled = false
+        updateHelloCard()
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val psk = HelloFrameBuilder.parsePsk(pskHex)
+                    TunnelClient.sendHello(psk, sessionId = System.currentTimeMillis(), sequence = 1L)
+                }.getOrElse { e ->
+                    TunnelClient.HelloResult(
+                        success = false,
+                        target = "${TunnelClient.EXIT_NODE_HOST}:${TunnelClient.EXIT_NODE_PORT}",
+                        frameLen = 0,
+                        sessionId = 0L,
+                        sequence = 1L,
+                        authMode = "HMAC-SHA256",
+                        sentAtMillis = System.currentTimeMillis(),
+                        errorMessage = (e.message ?: "unknown error").take(120),
+                    )
+                }
+            }
+            // Back on Main dispatcher (scope default)
+            helloUiState = HelloUiState.DONE
+            helloResult = result
+            btnSendVpsHello.isEnabled = true
+            updateHelloCard()
+        }
+    }
+
+    private fun updateHelloCard() {
+        val pskHex = BuildConfig.DEBUG_PSK_HEX
+        val pskOk = pskHex.isNotEmpty()
+        statVpsHelloTarget.text = "  target              :  ${TunnelClient.EXIT_NODE_HOST}:${TunnelClient.EXIT_NODE_PORT}"
+        statVpsHelloPskConfigured.text = "  pskConfigured       :  $pskOk"
+        statVpsHelloPskConfigured.setTextColor(if (pskOk) 0xFF00CC66.toInt() else 0xFFFF4444.toInt())
+
+        val result = helloResult
+        when (helloUiState) {
+            HelloUiState.IDLE -> {
+                statVpsHelloResult.text    = "  lastResult          :  idle"
+                statVpsHelloResult.setTextColor(0xFFAAAAAA.toInt())
+                statVpsHelloFrameLen.text  = ""
+                statVpsHelloSessionId.text = ""
+                statVpsHelloTimestamp.text = ""
+                statVpsHelloError.text     = ""
+            }
+            HelloUiState.SENDING -> {
+                statVpsHelloResult.text = "  lastResult          :  sending…"
+                statVpsHelloResult.setTextColor(0xFFFFAA44.toInt())
+            }
+            HelloUiState.DONE -> if (result != null) {
+                val label = if (result.success) "sent OK" else "error"
+                val color = if (result.success) 0xFF00CC66.toInt() else 0xFFFF4444.toInt()
+                statVpsHelloResult.text = "  lastResult          :  $label"
+                statVpsHelloResult.setTextColor(color)
+                statVpsHelloFrameLen.text  = if (result.success) "  frameLen            :  ${result.frameLen}" else ""
+                statVpsHelloSessionId.text = if (result.success) "  sessionId           :  ${result.sessionId}" else ""
+                val ageS = (System.currentTimeMillis() - result.sentAtMillis) / 1000
+                statVpsHelloTimestamp.text = "  sentAt              :  ${ageS}s ago"
+                val err = result.errorMessage
+                statVpsHelloError.text = if (err != null) "  error               :  $err" else ""
+            }
+        }
     }
 }

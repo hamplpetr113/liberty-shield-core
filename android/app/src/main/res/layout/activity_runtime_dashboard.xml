@@ -72,6 +72,53 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- VPS Hello Test -->
+            <TextView
+                android:id="@+id/header_vps_hello"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VPS Hello Test"
+                android:textSize="13sp"
+                android:textColor="#44AAFF"
+                android:textStyle="bold"
+                android:paddingBottom="4dp" />
+
+            <TextView android:id="@+id/stat_vps_hello_target"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vps_hello_psk_configured"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vps_hello_result"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#AAAAAA" />
+
+            <TextView android:id="@+id/stat_vps_hello_frame_len"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vps_hello_session_id"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#DDDDDD" />
+
+            <TextView android:id="@+id/stat_vps_hello_timestamp"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#AAAAAA" />
+
+            <TextView android:id="@+id/stat_vps_hello_error"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:typeface="monospace" android:textSize="12sp" android:textColor="#FF4444"
+                android:paddingBottom="4dp" />
+
+            <Button
+                android:id="@+id/btn_send_vps_hello"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:text="Send VPS Hello" />
+
             <!-- VPN -->
             <TextView
                 android:id="@+id/header_vpn"

@@ -28,6 +28,7 @@ object TunnelClient {
         val sessionId: Long,
         val sequence: Long,
         val authMode: String,
+        val sentAtMillis: Long,
         val errorMessage: String? = null,
     )
 
@@ -48,6 +49,7 @@ object TunnelClient {
         port: Int = EXIT_NODE_PORT,
     ): HelloResult {
         val target = "$host:$port"
+        val sentAt = System.currentTimeMillis()
         return try {
             val frame = HelloFrameBuilder.buildHelloFrame(psk, sessionId, sequence)
             val addr = InetAddress.getByName(host)
@@ -66,6 +68,7 @@ object TunnelClient {
                 sessionId = sessionId,
                 sequence = sequence,
                 authMode = "HMAC-SHA256",
+                sentAtMillis = sentAt,
             )
         } catch (e: Exception) {
             Log.e(TAG, "hello send failed target=$target: ${e.message}")
@@ -76,6 +79,7 @@ object TunnelClient {
                 sessionId = sessionId,
                 sequence = sequence,
                 authMode = "HMAC-SHA256",
+                sentAtMillis = sentAt,
                 errorMessage = e.message,
             )
         }
