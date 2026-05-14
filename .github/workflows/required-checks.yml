@@ -1,0 +1,79 @@
+﻿name: Required checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repo-policy:
+    name: Repo policy guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject forbidden workflow patterns
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in .github/workflows/*.yml; do
+            [ "$(basename $f)" = "required-checks.yml" ] && continue
+            grep -q "pull_request_target:" "$f" && echo "FAIL: pull_request_target in $f" && fail=1 || true
+            grep -q "write-all" "$f" && echo "FAIL: write-all in $f" && fail=1 || true
+            grep -q "contents: write" "$f" && echo "FAIL: contents: write in $f" && fail=1 || true
+            grep -q "id-token: write" "$f" && echo "FAIL: id-token: write in $f" && fail=1 || true
+          done
+          exit $fail
+
+  rust-core:
+    name: Rust core checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: fmt check
+        if: hashFiles('Cargo.toml') != ''
+        run: cargo fmt --check
+      - name: test
+        if: hashFiles('Cargo.toml') != ''
+        run: cargo test --workspace
+      - name: clippy
+        if: hashFiles('Cargo.toml') != ''
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  android-smoke:
+    name: Android smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+      - name: Run Android unit tests
+        run: |
+          if [ -f android/gradlew ]; then
+            cd android
+            chmod +x ./gradlew
+            ./gradlew test
+          elif [ -f gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew test
+          else
+            echo "No Android Gradle project found; skipping."
+          fi
