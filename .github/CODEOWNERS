@@ -1,0 +1,37 @@
+﻿# Liberty Shield — CODEOWNERS
+# Requires review from @hamplpetr113 before any listed path merges.
+# Branch protection must be enabled in GitHub UI to enforce this file.
+
+# Default owner for all files
+* @hamplpetr113
+
+# GitHub configuration and CI workflows
+/.github/ @hamplpetr113
+/.github/workflows/ @hamplpetr113
+/.github/CODEOWNERS @hamplpetr113
+/.github/copilot-instructions.md @hamplpetr113
+
+# Agent and autonomy policy documentation
+/docs/ai-agents/ @hamplpetr113
+/docs/autonomy/ @hamplpetr113
+/docs/security/ @hamplpetr113
+/docs/runtime/ @hamplpetr113
+
+# Project build configuration
+/Cargo.toml @hamplpetr113
+/Cargo.lock @hamplpetr113
+/CLAUDE.md @hamplpetr113
+
+# Exit node security-critical sources (verified paths)
+/server/exit-node/src/auth.rs @hamplpetr113
+/server/exit-node/src/config.rs @hamplpetr113
+/server/exit-node/src/main.rs @hamplpetr113
+/server/exit-node/src/server.rs @hamplpetr113
+
+# Security-sensitive filename patterns
+**/*auth* @hamplpetr113
+**/*crypto* @hamplpetr113
+**/*psk* @hamplpetr113
+**/*secret* @hamplpetr113
+**/*token* @hamplpetr113
+**/*key* @hamplpetr113
